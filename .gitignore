@@ -1,0 +1,8 @@
+# Secrets. Never commit.
+.env
+
+__pycache__/
+*.py[cod]
+
+# Generated plans
+out/

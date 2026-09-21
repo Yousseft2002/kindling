@@ -1,0 +1,1038 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Date Planner</title>
+
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icons/icon-32.png" sizes="32x32">
+<link rel="apple-touch-icon" href="/icons/icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Date">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#fdf6f0" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#14100d" media="(prefers-color-scheme: dark)">
+<meta name="description" content="Seven questions. One evening.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+
+<style>
+  :root{
+    --bg:#fdf6f0; --bg2:#f7e8dc; --card:#fffdfb; --ink:#241a14; --muted:#6f5d52;
+    --faint:#a3907f; --line:#eddfd2; --accent:#c2643c; --accent-soft:#f6ddcd;
+    --glow1:#f7cdb0; --glow2:#f3d9c6; --glow3:#e9d5e4;
+    --warn-bg:#fff4e6; --warn-line:#f2d9b8; --warn-ink:#8a5720;
+    --ok-ink:#4a7550;
+    --safe-t:env(safe-area-inset-top,0px); --safe-b:env(safe-area-inset-bottom,0px);
+    --ease:cubic-bezier(.22,.9,.28,1);
+    --serif:'Fraunces',Georgia,'Times New Roman',serif;
+    --sans:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{
+      --bg:#14100d; --bg2:#1d1712; --card:#221b16; --ink:#f7ece4; --muted:#bfa896;
+      --faint:#8d7566; --line:#362b23; --accent:#e79466; --accent-soft:#3a271c;
+      --glow1:#4a2f1e; --glow2:#3a2a1f; --glow3:#332536;
+      --warn-bg:#2d2015; --warn-line:#4d3520; --warn-ink:#e8b98a;
+      --ok-ink:#93c79c;
+    }
+  }
+
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  html{-webkit-text-size-adjust:100%}
+  body{
+    margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
+    font-size:17px;line-height:1.55;-webkit-font-smoothing:antialiased;
+    overflow-x:hidden;overscroll-behavior-y:contain;
+  }
+
+  /* Warm moving light. Three slow blobs behind everything - the only
+     decoration in the app, and the thing that makes it feel alive while
+     you answer. */
+  .aura{position:fixed;inset:0;z-index:0;pointer-events:none;overflow:hidden}
+  .aura i{
+    position:absolute;display:block;border-radius:50%;filter:blur(70px);
+    opacity:.75;will-change:transform;
+  }
+  .aura i:nth-child(1){width:60vmax;height:60vmax;background:var(--glow1);
+    top:-25vmax;left:-20vmax;animation:drift1 34s var(--ease) infinite alternate}
+  .aura i:nth-child(2){width:48vmax;height:48vmax;background:var(--glow2);
+    bottom:-22vmax;right:-18vmax;animation:drift2 40s var(--ease) infinite alternate}
+  .aura i:nth-child(3){width:38vmax;height:38vmax;background:var(--glow3);
+    top:35%;right:-16vmax;animation:drift3 46s var(--ease) infinite alternate}
+  @keyframes drift1{to{transform:translate3d(14vmax,10vmax,0) scale(1.15)}}
+  @keyframes drift2{to{transform:translate3d(-12vmax,-8vmax,0) scale(1.1)}}
+  @keyframes drift3{to{transform:translate3d(-10vmax,12vmax,0) scale(.9)}}
+
+  /* Full-height column: chrome at the top, the question centred in whatever
+     space is left, the button always at the bottom under your thumb.
+     `svh` rather than `vh` so a mobile browser's collapsing toolbar cannot
+     push the button off screen, and a fixed height rather than a minimum -
+     flex children only shrink inside a constrained container, and without
+     that the long option lists push the button off the bottom instead of
+     scrolling inside the deck. The results page is arbitrarily long, so
+     `body.done` relaxes it again. */
+  .wrap{position:relative;z-index:1;max-width:680px;margin:0 auto;
+        padding:calc(16px + var(--safe-t)) 20px calc(24px + var(--safe-b));
+        height:100vh;height:100svh;display:flex;flex-direction:column}
+  body.done .wrap{height:auto;min-height:100vh;min-height:100svh}
+  /* The form wraps the deck, so it has to carry the growth itself - otherwise
+     flex:1 on .deck has nothing to grow inside and the button floats
+     mid-page instead of sitting at the bottom. */
+  #f{flex:1;display:flex;flex-direction:column;min-height:0}
+  /* `margin:auto` on the stage rather than `align-items:center`: centring a
+     flex child that is taller than its container clips the top off in every
+     browser, and the long option lists are taller than a phone. */
+  .deck{flex:1;display:flex;min-height:0;overflow-y:auto;
+        -webkit-overflow-scrolling:touch;scrollbar-width:none}
+  .deck::-webkit-scrollbar{display:none}
+  .deck[hidden]{display:none}
+
+  /* ---- chrome ---- */
+  .top{display:flex;align-items:center;gap:12px;padding:6px 0 18px;flex:none}
+  .top img{width:30px;height:30px;border-radius:8px}
+  .top b{font-family:var(--serif);font-weight:600;font-size:17px;letter-spacing:-.01em}
+  .bar{flex:1;height:4px;border-radius:99px;background:var(--line);overflow:hidden}
+  .bar i{display:block;height:100%;width:0;border-radius:99px;background:var(--accent);
+         transition:width .5s var(--ease)}
+  .count{font-size:13px;color:var(--faint);font-variant-numeric:tabular-nums;min-width:38px;text-align:right}
+
+  .banner{flex:none;margin-bottom:14px;padding:12px 16px;border-radius:14px;font-size:14.5px;
+          border:1px solid var(--warn-line);background:var(--warn-bg);color:var(--warn-ink);
+          display:none;align-items:center;gap:12px;justify-content:space-between;line-height:1.45}
+  .banner.on{display:flex}
+  .banner button{border:0;background:var(--ink);color:var(--bg);border-radius:99px;
+    padding:9px 16px;font:inherit;font-size:13.5px;font-weight:600;cursor:pointer;flex:none}
+
+  /* ---- the deck ---- */
+  .stage{position:relative;width:100%;margin:auto 0;transition:height .5s var(--ease)}
+  .screen{position:absolute;inset:0 0 auto 0;opacity:0;pointer-events:none;
+          transform:translateY(26px) scale(.985);
+          transition:opacity .42s var(--ease),transform .42s var(--ease);}
+  .screen.active{opacity:1;pointer-events:auto;transform:none}
+  .screen.back{transform:translateY(-26px) scale(.985)}
+
+  /* Stagger the contents in, so a screen assembles rather than appears. */
+  .screen > *{opacity:0;transform:translateY(14px);
+              transition:opacity .45s var(--ease),transform .45s var(--ease)}
+  .screen.active > *{opacity:1;transform:none}
+  .screen.active > :nth-child(1){transition-delay:.05s}
+  .screen.active > :nth-child(2){transition-delay:.11s}
+  .screen.active > :nth-child(3){transition-delay:.17s}
+  .screen.active > :nth-child(4){transition-delay:.23s}
+  .screen.active > :nth-child(5){transition-delay:.29s}
+
+  .eyebrow{font-size:12.5px;letter-spacing:.16em;text-transform:uppercase;
+           color:var(--accent);font-weight:600;margin:0 0 14px}
+  h1{font-family:var(--serif);font-weight:600;letter-spacing:-.02em;
+     font-size:clamp(30px,7.4vw,46px);line-height:1.08;margin:0 0 12px}
+  .say{font-size:clamp(16px,3.6vw,18.5px);color:var(--muted);margin:0 0 26px;max-width:32em}
+
+  /* ---- controls ---- */
+  input,textarea,select{
+    width:100%;font:inherit;color:var(--ink);background:var(--card);
+    border:1.5px solid var(--line);border-radius:16px;padding:16px 18px;
+    font-size:19px;transition:border-color .2s,box-shadow .2s;
+  }
+  input:focus,textarea:focus,select:focus{
+    outline:0;border-color:var(--accent);box-shadow:0 0 0 4px var(--accent-soft)}
+  textarea{min-height:120px;resize:vertical;font-size:17px;line-height:1.5}
+  ::placeholder{color:var(--faint)}
+  .hint{font-size:14px;color:var(--faint);margin-top:12px}
+
+  .pair{display:flex;gap:12px}
+  .pair > *{flex:1;min-width:0}
+  .pair .narrow{flex:0 0 116px}
+
+  .field{margin-bottom:18px}
+  .field label{display:block;font-size:12.5px;letter-spacing:.12em;text-transform:uppercase;
+               color:var(--faint);font-weight:600;margin-bottom:8px}
+
+  /* option cards - stage, dress, transport */
+  .opts{display:grid;gap:10px}
+  .opt{display:block;width:100%;text-align:left;cursor:pointer;background:var(--card);
+       border:1.5px solid var(--line);border-radius:18px;padding:16px 18px;
+       transition:transform .16s var(--ease),border-color .2s,box-shadow .2s}
+  .opt:hover{transform:translateY(-2px);border-color:var(--accent)}
+  .opt.on{border-color:var(--accent);box-shadow:0 0 0 4px var(--accent-soft)}
+  .opt b{display:block;font-family:var(--serif);font-size:20px;font-weight:600;
+         letter-spacing:-.01em;margin-bottom:3px}
+  .opt span{display:block;font-size:14.5px;color:var(--muted);line-height:1.45}
+
+  /* budget */
+  .money{font-family:var(--serif);font-size:clamp(46px,13vw,72px);font-weight:600;
+         letter-spacing:-.03em;line-height:1;margin:6px 0 4px;color:var(--ink);
+         font-variant-numeric:tabular-nums}
+  .money small{font-size:.42em;color:var(--muted);font-weight:400;margin-right:.18em}
+  input[type=range]{-webkit-appearance:none;appearance:none;background:transparent;
+    padding:0;border:0;height:34px;box-shadow:none}
+  input[type=range]:focus{box-shadow:none}
+  input[type=range]::-webkit-slider-runnable-track{height:8px;border-radius:99px;background:var(--line)}
+  input[type=range]::-moz-range-track{height:8px;border-radius:99px;background:var(--line)}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:30px;height:30px;
+    margin-top:-11px;border-radius:50%;background:var(--accent);border:3px solid var(--card);
+    box-shadow:0 2px 10px rgba(0,0,0,.18);cursor:grab}
+  input[type=range]::-moz-range-thumb{width:24px;height:24px;border-radius:50%;
+    background:var(--accent);border:3px solid var(--card);cursor:grab}
+
+  /* chips */
+  .chips{display:flex;flex-wrap:wrap;gap:9px}
+  .chip{padding:11px 17px;border:1.5px solid var(--line);border-radius:99px;font-size:15.5px;
+        color:var(--muted);cursor:pointer;background:var(--card);user-select:none;
+        transition:transform .16s var(--ease),border-color .2s,color .2s}
+  .chip:hover{transform:translateY(-2px);border-color:var(--accent)}
+  .chip.on{border-color:var(--accent);color:var(--accent);background:var(--accent-soft);font-weight:500}
+
+  /* location */
+  .loc{position:relative}
+  .loc-row{display:flex;gap:10px}
+  .loc-row input{flex:1;min-width:0}
+  .pin{flex:none;width:60px;border:1.5px solid var(--line);border-radius:16px;
+       background:var(--card);color:var(--accent);font-size:22px;cursor:pointer;
+       padding:0;line-height:1;transition:transform .16s var(--ease),border-color .2s}
+  .pin:hover{transform:translateY(-2px);border-color:var(--accent)}
+  .pin:disabled{opacity:.5}
+  .ac{position:absolute;z-index:30;left:0;right:0;top:calc(100% + 8px);background:var(--card);
+      border:1.5px solid var(--line);border-radius:18px;overflow:hidden;display:none;
+      box-shadow:0 18px 44px rgba(60,30,10,.16)}
+  .ac.open{display:block}
+  .ac div{padding:14px 18px;cursor:pointer;font-size:16.5px;border-bottom:1px solid var(--line)}
+  .ac div:last-child{border-bottom:0}
+  .ac div:hover,.ac div[aria-selected=true]{background:var(--accent-soft)}
+  .ac small{display:block;color:var(--faint);font-size:13.5px;margin-top:2px}
+  .anchored{margin-top:12px;font-size:14px;color:var(--ok-ink);display:none}
+  .anchored.on{display:block}
+
+  /* ---- nav ---- */
+  .nav{flex:none;display:flex;align-items:center;gap:12px;padding-top:22px}
+  .go{flex:1;padding:17px 28px;border:0;border-radius:99px;background:var(--ink);
+      color:var(--bg);font:inherit;font-weight:600;font-size:18px;cursor:pointer;
+      transition:transform .16s var(--ease),opacity .2s}
+  .go:hover:not(:disabled){transform:translateY(-2px)}
+  .go:disabled{opacity:.4;cursor:not-allowed}
+  .back{flex:none;width:56px;height:56px;border-radius:50%;border:1.5px solid var(--line);
+        background:transparent;color:var(--muted);font-size:20px;cursor:pointer;
+        transition:transform .16s var(--ease),border-color .2s}
+  .back:hover{transform:translateY(-2px);border-color:var(--accent);color:var(--accent)}
+  .back[hidden]{display:none}
+  .skip{background:0;border:0;color:var(--faint);font:inherit;font-size:14.5px;
+        cursor:pointer;padding:10px;text-decoration:underline;text-underline-offset:3px}
+
+  .spin{display:inline-block;width:15px;height:15px;margin-right:9px;vertical-align:-2px;
+        border:2px solid currentColor;border-right-color:transparent;border-radius:50%;
+        animation:sp .7s linear infinite}
+  @keyframes sp{to{transform:rotate(360deg)}}
+
+  /* ---- results ---- */
+  #out{display:none}
+  #out.on{display:block}
+  .hero{margin-bottom:22px}
+  .hero h2{font-family:var(--serif);font-size:clamp(28px,6.6vw,40px);line-height:1.1;
+           margin:0 0 10px;font-weight:600;letter-spacing:-.02em}
+  .pitch{color:var(--muted);font-size:18.5px;margin:0}
+  .arc{margin:18px 0 24px;padding:16px 20px;background:var(--card);border:1.5px solid var(--line);
+       border-radius:18px;font-size:16px;color:var(--muted);line-height:1.75}
+  .arc b{color:var(--ink);font-weight:600}
+  .card{background:var(--card);border:1.5px solid var(--line);border-radius:20px;padding:22px}
+  .stop{margin-bottom:14px;animation:rise .5s var(--ease) backwards}
+  @keyframes rise{from{opacity:0;transform:translateY(18px)}}
+  .stop .meta{font-size:12.5px;letter-spacing:.1em;text-transform:uppercase;
+              color:var(--accent);font-weight:600;margin-bottom:7px}
+  .stop h3{font-family:var(--serif);margin:0 0 9px;font-size:23px;line-height:1.2;font-weight:600}
+  .stop .why{color:var(--muted);font-size:17px;margin:0}
+  .detail{margin-top:11px;font-size:15.5px;color:var(--muted);line-height:1.5}
+  .detail b{color:var(--ink);font-weight:600}
+  /* Route map: OpenStreetMap tiles laid out by hand, with a numbered pin per
+     stop. No mapping library - a slippy map is a few lines of Web Mercator
+     and the page stays dependency-free. */
+  .map{position:relative;width:100%;height:240px;overflow:hidden;border-radius:20px;
+       border:1.5px solid var(--line);background:var(--bg2);margin:0 0 20px}
+  .map .tiles{position:absolute;inset:0}
+  .map img{position:absolute;width:256px;height:256px;border:0;display:block}
+  .map .pin{position:absolute;width:30px;height:30px;margin:-15px 0 0 -15px;
+            border-radius:50%;background:var(--accent);color:#fff;font-size:14.5px;
+            font-weight:700;display:flex;align-items:center;justify-content:center;
+            box-shadow:0 2px 8px rgba(0,0,0,.4);border:2.5px solid #fff}
+  .map .credit{position:absolute;right:0;bottom:0;background:rgba(255,255,255,.82);
+               color:#333;font-size:10.5px;padding:2px 7px;border-radius:8px 0 0 0}
+  .map .credit a{color:#333}
+  @media (prefers-color-scheme:dark){
+    .map img{filter:brightness(.82) contrast(1.05)}
+  }
+
+  /* Google rating. The star and the count sit right under the venue name,
+     because deciding between four suggestions is what they are for. */
+  .rate{display:flex;align-items:center;gap:7px;margin:0 0 10px;font-size:15.5px}
+  .rate b{font-weight:600;color:var(--ink);font-variant-numeric:tabular-nums}
+  .rate .stars{color:#e8a33d;letter-spacing:1px;font-size:14px}
+  .rate span{color:var(--faint);font-size:14px}
+  .unverified{display:inline-flex;align-items:center;gap:6px;margin:0 0 10px;
+              font-size:14.5px;color:var(--warn-ink);background:var(--warn-bg);
+              border:1px solid var(--warn-line);border-radius:99px;padding:5px 12px}
+  .attrib{margin-top:6px;font-size:12.5px;color:var(--faint)}
+  .links{margin-top:16px;display:flex;gap:10px;flex-wrap:wrap}
+  .btn{display:inline-block;padding:11px 19px;border-radius:99px;text-decoration:none;
+       font-size:14.5px;font-weight:600;background:var(--ink);color:var(--bg)}
+  .btn.ghost{background:transparent;color:var(--ink);border:1.5px solid var(--line)}
+  .travel{padding:4px 0 14px 24px;font-size:15px;color:var(--faint)}
+  .warn{background:var(--warn-bg);border-color:var(--warn-line);color:var(--warn-ink);margin-top:18px}
+  .warn h4{margin:0 0 9px;font-size:13px;letter-spacing:.1em;text-transform:uppercase}
+  .warn ul{margin:0;padding-left:20px;font-size:15.5px;line-height:1.6}
+  /* Where the suggestions came from. Shown because the web search terms
+     require crediting sources when search output is displayed - and because
+     "how do you know that" is a fair question to ask a date planner. */
+  .sources{margin-top:18px;padding:18px 20px;background:var(--card);
+           border:1.5px solid var(--line);border-radius:18px}
+  .sources h4{margin:0 0 10px;font-size:12.5px;letter-spacing:.14em;
+              text-transform:uppercase;color:var(--accent);font-weight:600}
+  .sources ol{margin:0;padding-left:20px;font-size:14.5px;line-height:1.7}
+  .sources a{color:var(--muted);text-decoration:none;border-bottom:1px solid var(--line)}
+  .sources a:hover{color:var(--accent);border-color:var(--accent)}
+  .foot{margin:22px 0 0;font-size:13.5px;color:var(--faint);line-height:1.6}
+  .err{border-color:var(--warn-line);background:var(--warn-bg);color:var(--warn-ink);font-size:17px}
+
+  /* Motion is decoration here, never information: every screen is still
+     reachable and readable with all of it switched off. */
+  @media (prefers-reduced-motion:reduce){
+    *,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;
+                         transition-duration:.001ms!important}
+    .screen{transform:none}
+    .screen > *{transform:none}
+  }
+</style>
+</head>
+<body>
+<div class="aura" aria-hidden="true"><i></i><i></i><i></i></div>
+
+<div class="wrap">
+
+  <div class="top">
+    <img src="/icons/icon-192.png" alt="">
+    <b>Date planner</b>
+    <span class="bar"><i id="bar"></i></span>
+    <span class="count" id="count"></span>
+  </div>
+
+  <div class="banner" id="install">
+    <span>Add this to your home screen.</span>
+    <button id="install_go" type="button">Install</button>
+  </div>
+  <div class="banner" id="stale"><span id="stale_text"></span></div>
+
+  <form id="f" autocomplete="off">
+  <div class="deck" id="deck">
+  <div class="stage" id="stage">
+
+    <!-- 0 ------------------------------------------------------------- -->
+    <section class="screen" data-step>
+      <p class="eyebrow">Seven questions</p>
+      <h1>Let's plan something worth leaving the house for.</h1>
+      <p class="say">Tell me the constraints and I'll give you a route — where to go, when to be there, what it costs, and what to book ahead.</p>
+    </section>
+
+    <!-- 1 --- location ------------------------------------------------- -->
+    <section class="screen" data-step data-focus="location" data-required="location">
+      <p class="eyebrow">Where</p>
+      <h1>Where are you two going to be?</h1>
+      <p class="say">A city works. A neighbourhood works better — I'll keep every stop within walking distance of it.</p>
+      <div class="loc">
+        <div class="loc-row">
+          <input id="location" name="location" placeholder="Start typing…" autocapitalize="words" required>
+          <button class="pin" id="here" type="button" title="Use my location" aria-label="Use my location">&#9678;</button>
+        </div>
+        <div class="ac" id="ac" role="listbox"></div>
+        <div class="anchored" id="anchored"></div>
+        <input type="hidden" id="lat" name="lat">
+        <input type="hidden" id="lon" name="lon">
+      </div>
+    </section>
+
+    <!-- 2 --- when ----------------------------------------------------- -->
+    <section class="screen" data-step>
+      <p class="eyebrow">When</p>
+      <h1>And when?</h1>
+      <p class="say">Leave the date blank for this Saturday. The start time matters more than you'd think — it decides whether you catch the sunset.</p>
+      <div>
+        <div class="pair field">
+          <div><label for="on">Date</label><input id="on" name="on" type="date"></div>
+          <div><label for="start_time">Starts</label><input id="start_time" name="start_time" type="time" value="17:00"></div>
+        </div>
+        <div class="field">
+          <label for="hours">Roughly how long — <span id="hours_out">5</span> hours</label>
+          <input id="hours" name="hours" type="range" min="2" max="8" step="0.5" value="5">
+        </div>
+      </div>
+    </section>
+
+    <!-- 3 --- budget --------------------------------------------------- -->
+    <section class="screen" data-step>
+      <p class="eyebrow">Budget</p>
+      <h1>What's the damage?</h1>
+      <p class="say">For both of you, everything in — food, drinks, tickets, getting there. I'll aim to come in under it.</p>
+      <div>
+        <div class="money"><small id="cur_out">USD</small><span id="budget_out">150</span></div>
+        <input id="budget_range" type="range" min="20" max="600" step="10" value="150" aria-label="Budget">
+        <div class="pair" style="margin-top:18px">
+          <div class="narrow"><label for="currency" style="font-size:12.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--faint);font-weight:600;display:block;margin-bottom:8px">Currency</label>
+            <input id="currency" name="currency" value="USD" maxlength="4" autocapitalize="characters"></div>
+          <div><label for="budget" style="font-size:12.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--faint);font-weight:600;display:block;margin-bottom:8px">Exact</label>
+            <input id="budget" name="budget" type="number" inputmode="decimal" min="0" step="5" value="150"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 4 --- stage ---------------------------------------------------- -->
+    <section class="screen" data-step>
+      <p class="eyebrow">The two of you</p>
+      <h1>Where are you at?</h1>
+      <p class="say">This changes the shape of the evening more than anything else you'll tell me.</p>
+      <div class="opts" id="opts_relationship_stage"></div>
+      <input type="hidden" id="relationship_stage" name="relationship_stage" value="getting_to_know">
+    </section>
+
+    <!-- 5 --- dress ---------------------------------------------------- -->
+    <section class="screen" data-step>
+      <p class="eyebrow">Dressed</p>
+      <h1>What are you wearing?</h1>
+      <p class="say">So I don't send you somewhere that turns you away at the door.</p>
+      <div class="opts" id="opts_clothing_style"></div>
+      <input type="hidden" id="clothing_style" name="clothing_style" value="smart_casual">
+    </section>
+
+    <!-- 6 --- transport ------------------------------------------------ -->
+    <section class="screen" data-step>
+      <p class="eyebrow">Getting around</p>
+      <h1>How are you moving?</h1>
+      <p class="say">This sets how far apart the stops can be. On foot means one neighbourhood.</p>
+      <div class="opts" id="opts_transportation"></div>
+      <input type="hidden" id="transportation" name="transportation" value="walking">
+    </section>
+
+    <!-- 7 --- interests ------------------------------------------------ -->
+    <section class="screen" data-step data-optional>
+      <p class="eyebrow">Interests</p>
+      <h1>What do you two actually like?</h1>
+      <p class="say">Tap a few, or type your own. At least two stops will connect to these.</p>
+      <div>
+        <input id="interests" name="interests" placeholder="jazz, photography, natural wine">
+        <div class="chips" id="chips" style="margin-top:14px"></div>
+      </div>
+    </section>
+
+    <!-- 8 --- weather -------------------------------------------------- -->
+    <section class="screen" data-step data-optional>
+      <p class="eyebrow">Weather</p>
+      <h1>Anything you know about the weather?</h1>
+      <p class="say">Leave it blank and I'll fetch the real forecast for your spot. Override it if you know better.</p>
+      <div>
+        <input id="weather" name="weather" placeholder="Blank to fetch it — or: cold and wet">
+        <p class="hint">An outdoor stop always gets a named indoor fallback either way.</p>
+      </div>
+    </section>
+
+    <!-- 9 --- notes ---------------------------------------------------- -->
+    <section class="screen" data-step data-optional>
+      <p class="eyebrow">Last thing</p>
+      <h1>Anything I should avoid?</h1>
+      <p class="say">Allergies, a bad knee, somewhere you'd rather not run into anyone. This overrides everything except the budget.</p>
+      <textarea id="party_note" name="party_note" placeholder="Vegetarian. Not much walking. Nowhere too loud."></textarea>
+    </section>
+
+  </div>
+  </div>
+  </form>
+
+  <div class="nav" id="nav">
+    <button class="back" id="back" type="button" hidden aria-label="Back">&#8592;</button>
+    <button class="go" id="go" type="button">Start</button>
+    <button class="skip" id="skip" type="button" hidden>Skip</button>
+  </div>
+
+  <div id="out"></div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const LAST_PLAN = 'dateplanner.lastplan';
+const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/* ---- is there actually a server? -----------------------------------
+   This page is useless without the Python server: the planner, the
+   geocoder and the forecast all live there. Three ways to be looking at
+   it with no server behind it, and the browser's own "Failed to fetch"
+   names none of them:
+     1. opening index.html off the disk            (file:)
+     2. an editor or IDE preview of the file       (data:, blob:, about:)
+     3. a tab left open after the server stopped   (http:, but dead)
+   The first two look identical to the real app, which is why they get
+   called out loudly instead of failing on the first click. */
+const SERVED = location.protocol === 'http:' || location.protocol === 'https:';
+
+function reachError(err) {
+  if (!SERVED) return 'This is a preview of the page, not the running app. '
+                    + 'Open http://127.0.0.1:8765 instead.';
+  if (!navigator.onLine) return 'You are offline — no new plan until you have signal.';
+  if (err instanceof TypeError) {
+    // Name the port. "Is the server running?" is useless advice when it
+    // is running, just not on the port this tab is pointed at.
+    return `Nothing is answering at ${location.origin}. The server is not running on `
+         + `port ${location.port || '80'} — start it with  python run.py --serve --port `
+         + `${location.port || '8765'}  , or open the port it is actually on.`;
+  }
+  return err.message;
+}
+
+function setStale(msg) {
+  $('#stale_text').textContent = msg;
+  $('#stale').classList.add('on');
+}
+
+/* ---- service worker ------------------------------------------------ */
+if ('serviceWorker' in navigator) {
+  if (window.isSecureContext) {
+    navigator.serviceWorker.register('/sw.js').catch(e => console.warn('sw failed', e));
+  } else {
+    console.info('Not a secure context — no service worker. Use localhost, or https, to install.');
+  }
+}
+
+/* ---- install prompt ------------------------------------------------ */
+let deferredInstall = null;
+window.addEventListener('beforeinstallprompt', e => {
+  e.preventDefault();
+  deferredInstall = e;
+  $('#install').classList.add('on');
+});
+$('#install_go').addEventListener('click', async () => {
+  $('#install').classList.remove('on');
+  if (!deferredInstall) return;
+  deferredInstall.prompt();
+  await deferredInstall.userChoice;
+  deferredInstall = null;
+});
+window.addEventListener('appinstalled', () => $('#install').classList.remove('on'));
+
+/* ====================================================================
+   The deck: one question per screen.
+   ==================================================================== */
+const screens = [...document.querySelectorAll('[data-step]')];
+const stage = $('#stage');
+const deck = $('#deck');
+let step = 0;
+
+function measure() {
+  // The stage animates to the height of the active screen, so the nav
+  // buttons glide rather than jump. Recomputed whenever content changes
+  // (the autocomplete opening, option cards arriving).
+  const el = screens[step];
+  if (el) stage.style.height = el.scrollHeight + 'px';
+}
+
+function go(next, back = false) {
+  if (next < 0 || next >= screens.length) return;
+  const leaving = screens[step];
+  if (leaving) {
+    leaving.classList.remove('active');
+    leaving.classList.toggle('back', !back);
+  }
+  step = next;
+  const el = screens[step];
+  el.classList.remove('back');
+  // One frame, so the browser applies the start state before animating.
+  requestAnimationFrame(() => {
+    el.classList.add('active');
+    measure();
+    chrome();
+    const focus = el.dataset.focus && document.getElementById(el.dataset.focus);
+    if (focus && !REDUCED) setTimeout(() => focus.focus({preventScroll: true}), 320);
+    else if (focus) focus.focus({preventScroll: true});
+  });
+}
+
+function chrome() {
+  const last = step === screens.length - 1;
+  $('#bar').style.width = (step / (screens.length - 1) * 100) + '%';
+  $('#count').textContent = step ? `${step}/${screens.length - 1}` : '';
+  $('#back').hidden = step === 0;
+  $('#skip').hidden = !screens[step].hasAttribute('data-optional') || last;
+  $('#go').textContent = step === 0 ? 'Start' : last ? 'Plan my evening' : 'Next';
+  validate();
+}
+
+function validate() {
+  const need = screens[step].dataset.required;
+  const ok = !need || document.getElementById(need).value.trim().length > 1;
+  $('#go').disabled = !ok;
+  return ok;
+}
+
+function advance() {
+  if (!validate()) return;
+  if (step === screens.length - 1) submit();
+  else go(step + 1);
+}
+
+$('#go').addEventListener('click', advance);
+$('#back').addEventListener('click', () => go(step - 1, true));
+$('#skip').addEventListener('click', () => go(step + 1));
+
+// Enter advances, except in the notes box where it should make a newline.
+$('#f').addEventListener('keydown', e => {
+  if (e.key !== 'Enter' || e.target.tagName === 'TEXTAREA') return;
+  if ($('#ac').classList.contains('open')) return;   // the picker owns Enter
+  e.preventDefault();
+  advance();
+});
+$('#f').addEventListener('submit', e => { e.preventDefault(); advance(); });
+$('#f').addEventListener('input', validate);
+addEventListener('resize', measure);
+
+/* ---- option cards, built from the server's vocabularies ------------- */
+if (SERVED)
+fetch('/api/options').then(r => r.json()).then(opts => {
+  for (const field of ['relationship_stage', 'clothing_style', 'transportation']) {
+    const box = document.getElementById('opts_' + field);
+    const store = document.getElementById(field);
+    if (!box || !opts[field]) continue;
+    for (const [value, desc] of Object.entries(opts[field])) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'opt' + (value === store.value ? ' on' : '');
+      b.dataset.value = value;
+      b.innerHTML = `<b>${esc(value.replace(/_/g, ' ').replace(/^\w/, c => c.toUpperCase()))}</b>`
+                  + `<span>${esc(desc)}</span>`;
+      // Picking an option answers the question, so it moves on by itself.
+      // That is the whole appeal of one-thing-per-screen.
+      b.onclick = () => {
+        store.value = value;
+        [...box.children].forEach(c => c.classList.toggle('on', c === b));
+        setTimeout(() => go(step + 1), REDUCED ? 0 : 220);
+      };
+      box.appendChild(b);
+    }
+  }
+  measure();
+
+  // Say this before they answer seven questions for a template.
+  if (opts.has_key === false) {
+    setStale('No API key on the server, so plans will be generic templates rather '
+           + 'than real venues. Set ANTHROPIC_API_KEY and restart the server — '
+           + 'python run.py --check-key  will tell you if it worked.');
+  }
+}).catch(err => setStale(reachError(err)));
+
+/* ---- budget: slider and box, each following the other --------------- */
+const bRange = $('#budget_range'), bNum = $('#budget'), bOut = $('#budget_out');
+function showBudget(v) { bOut.textContent = Math.round(v); }
+bRange.addEventListener('input', () => { bNum.value = bRange.value; showBudget(bRange.value); });
+bNum.addEventListener('input', () => {
+  showBudget(bNum.value || 0);
+  if (+bNum.value >= +bRange.min && +bNum.value <= +bRange.max) bRange.value = bNum.value;
+});
+$('#currency').addEventListener('input', e =>
+  $('#cur_out').textContent = (e.target.value || 'USD').toUpperCase());
+$('#hours').addEventListener('input', e => $('#hours_out').textContent = e.target.value);
+
+/* ---- interest chips ------------------------------------------------- */
+const SUGGESTIONS = ['jazz','photography','natural wine','film','live music','markets',
+  'hiking','art galleries','bookshops','coffee','cocktails','vintage','architecture','food halls'];
+const chipFor = {};
+SUGGESTIONS.forEach(s => {
+  const el = document.createElement('span');
+  el.className = 'chip'; el.textContent = s;
+  el.onclick = () => {
+    const f = $('#interests');
+    const have = f.value.split(',').map(x => x.trim()).filter(Boolean);
+    f.value = (have.includes(s) ? have.filter(x => x !== s) : [...have, s]).join(', ');
+    syncChips();
+  };
+  chipFor[s] = el;
+  $('#chips').appendChild(el);
+});
+function syncChips() {
+  const have = $('#interests').value.split(',').map(x => x.trim().toLowerCase());
+  for (const [s, el] of Object.entries(chipFor)) el.classList.toggle('on', have.includes(s));
+}
+$('#interests').addEventListener('input', syncChips);
+
+/* ---- location -------------------------------------------------------
+   Two ways in, both ending at coordinates: pick from the autocomplete,
+   or let the phone say where you are. Coordinates are what make the
+   suggestions local — the name alone leaves the model guessing which
+   Springfield, and answering for the whole city instead of your end. */
+const acBox = $('#ac');
+let acTimer = null, acItems = [], acIndex = -1;
+
+function setAnchor(lat, lon, label) {
+  $('#lat').value = lat ?? '';
+  $('#lon').value = lon ?? '';
+  const el = $('#anchored');
+  if (lat == null) { el.classList.remove('on'); el.textContent = ''; measure(); return; }
+  el.classList.add('on');
+  el.textContent = '◉ Anchored on ' + (label || `${(+lat).toFixed(3)}, ${(+lon).toFixed(3)}`)
+                 + ' — stops will be near here.';
+  measure();
+}
+
+function closeAc() { acBox.classList.remove('open'); acBox.innerHTML = ''; acItems = []; acIndex = -1; measure(); }
+
+function renderAc(places) {
+  acItems = places; acIndex = -1;
+  if (!places.length) return closeAc();
+  acBox.innerHTML = places.map((p, i) =>
+    `<div role="option" data-i="${i}">${esc(p.label)}<small>${esc(p.detail || '')}</small></div>`).join('');
+  acBox.classList.add('open');
+  acBox.querySelectorAll('div[data-i]').forEach(el => { el.onclick = () => pick(places[+el.dataset.i]); });
+  measure();
+}
+
+function pick(p) {
+  $('#location').value = p.detail ? `${p.label}, ${p.detail}` : p.label;
+  setAnchor(p.lat, p.lon, p.label);
+  closeAc(); validate();
+}
+
+$('#location').addEventListener('input', () => {
+  setAnchor(null);              // typing invalidates a previously picked pin
+  clearTimeout(acTimer);
+  const q = $('#location').value.trim();
+  if (q.length < 2 || !SERVED) return closeAc();
+  acTimer = setTimeout(() => {
+    fetch('/api/places?q=' + encodeURIComponent(q))
+      .then(r => r.json()).then(d => renderAc(d.places || [])).catch(closeAc);
+  }, 250);
+});
+
+$('#location').addEventListener('keydown', e => {
+  if (!acBox.classList.contains('open')) return;
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault();
+    acIndex = (acIndex + (e.key === 'ArrowDown' ? 1 : -1) + acItems.length) % acItems.length;
+    acBox.querySelectorAll('div[data-i]').forEach((el, i) => el.setAttribute('aria-selected', i === acIndex));
+  } else if (e.key === 'Enter' && acIndex >= 0) {
+    e.preventDefault(); pick(acItems[acIndex]);
+  } else if (e.key === 'Escape') { closeAc(); }
+});
+
+document.addEventListener('click', e => { if (!e.target.closest('.loc')) closeAc(); });
+
+$('#here').addEventListener('click', () => {
+  const btn = $('#here');
+  if (!navigator.geolocation) return setStale('This browser will not share your location.');
+  btn.disabled = true; btn.textContent = '···';
+  navigator.geolocation.getCurrentPosition(
+    async pos => {
+      const { latitude, longitude } = pos.coords;
+      try {
+        const d = await fetch(`/api/where?lat=${latitude}&lon=${longitude}`).then(r => r.json());
+        const label = d.place?.label;
+        // A failed reverse lookup still leaves usable coordinates.
+        $('#location').value = label || `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`;
+        setAnchor(latitude, longitude, label);
+      } catch {
+        $('#location').value = `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`;
+        setAnchor(latitude, longitude, null);
+      }
+      closeAc(); validate();
+      btn.disabled = false; btn.innerHTML = '&#9678;';
+    },
+    err => {
+      btn.disabled = false; btn.innerHTML = '&#9678;';
+      setStale(err.code === 1
+        ? 'Location permission denied — type where you are instead.'
+        : (window.isSecureContext
+            ? 'Could not get a location fix — type where you are instead.'
+            : 'Location needs https or localhost. Type where you are instead.'));
+    },
+    { enableHighAccuracy: false, timeout: 10000, maximumAge: 300000 }
+  );
+});
+
+/* ---- planning ------------------------------------------------------- */
+/* ---- waiting well ---------------------------------------------------
+   The server reports which phase the plan is in; this shows it on the
+   button and gives up with a real message rather than spinning forever. */
+const PLAN_TIMEOUT_MS = 4 * 60 * 1000;
+
+function working(label, seconds) {
+  const secs = seconds > 4 ? ` <span style="opacity:.6">${seconds}s</span>` : '';
+  $('#go').innerHTML = `<span class="spin"></span>${esc(label)}${secs}`;
+}
+
+async function poll(job, firstLabel) {
+  working(firstLabel || 'Working on it', 0);
+  const began = Date.now();
+
+  while (Date.now() - began < PLAN_TIMEOUT_MS) {
+    await new Promise(r => setTimeout(r, 900));
+    let s;
+    try {
+      const r = await fetch('/api/plan?job=' + encodeURIComponent(job));
+      s = await r.json();
+      if (r.status === 404) throw new Error(s.error || 'the plan expired');
+      if (!r.ok) throw new Error(s.error || 'request failed');
+    } catch (e) {
+      // One dropped poll is not a failed plan - the work continues on the
+      // server. Keep asking until the overall timeout.
+      if (e instanceof TypeError) continue;
+      throw e;
+    }
+    if (s.state === 'error') throw new Error(s.error || 'the planner fell over');
+    if (s.state === 'done') return s;
+    working(s.label || 'Working on it', Math.round(s.elapsed || 0));
+  }
+  throw new Error('That took longer than four minutes, so something is wrong. '
+                + 'Check the server log.');
+}
+
+async function submit() {
+  const btn = $('#go');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spin"></span>Working on it';
+  $('#stale').classList.remove('on');
+
+  const body = Object.fromEntries(new FormData($('#f')).entries());
+  body.budget = parseFloat(body.budget) || 150;
+  body.hours = parseFloat(body.hours) || 5;
+
+  try {
+    // Planning is a background job: a web search, two model calls and a
+    // lookup per venue. Start it, then poll and show the phase - a minute of
+    // silence is indistinguishable from a crash, which this app has already
+    // taught us the hard way.
+    const r = await fetch('/api/plan', {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
+    });
+    const started = await r.json();
+    if (!r.ok) throw new Error(started.error || 'request failed');
+
+    const data = await poll(started.job, started.label);
+    show(data);
+    try { localStorage.setItem(LAST_PLAN, JSON.stringify({ ...data, saved: Date.now() })); } catch {}
+  } catch (err) {
+    $('#out').classList.add('on');
+    $('#out').innerHTML = `<div class="card err">${esc(reachError(err))}</div>`
+                        + `<button class="go" type="button" onclick="location.reload()" `
+                        + `style="margin-top:18px">Start over</button>`;
+    deck.hidden = true;
+    $('#nav').style.display = 'none';
+    document.body.classList.add('done');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Plan my evening';
+  }
+}
+
+/* ---- route map ------------------------------------------------------
+   A slippy map is about fifteen lines of Web Mercator, so there is no
+   mapping library here: pick the zoom that fits every stop, lay the
+   tiles that cover the frame, and put a numbered pin on each venue.
+
+   Only stops that were actually found in map data have coordinates, so
+   the map draws exactly the places you can really go to. Fewer than two
+   and there is nothing to show a route between, so it is skipped. */
+function routeMap(stops, height) {
+  const pts = stops.map((s, i) => ({s, i})).filter(o => o.s.lat != null && o.s.lon != null);
+  if (pts.length < 2) return '';
+
+  const W = Math.min(680, Math.max(280, (document.querySelector('.wrap')?.clientWidth || 640) - 4));
+  const H = height, TILE = 256, PAD = 42;
+  const projX = (lon, z) => (lon + 180) / 360 * Math.pow(2, z) * TILE;
+  const projY = (lat, z) => {
+    const r = lat * Math.PI / 180;
+    return (1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * Math.pow(2, z) * TILE;
+  };
+
+  // Largest zoom at which every pin still fits inside the frame.
+  let z = 18;
+  for (; z > 2; z--) {
+    const xs = pts.map(o => projX(o.s.lon, z)), ys = pts.map(o => projY(o.s.lat, z));
+    if (Math.max(...xs) - Math.min(...xs) <= W - PAD * 2 &&
+        Math.max(...ys) - Math.min(...ys) <= H - PAD * 2) break;
+  }
+
+  const xs = pts.map(o => projX(o.s.lon, z)), ys = pts.map(o => projY(o.s.lat, z));
+  const cx = (Math.max(...xs) + Math.min(...xs)) / 2;
+  const cy = (Math.max(...ys) + Math.min(...ys)) / 2;
+  const left = cx - W / 2, top = cy - H / 2;          // frame origin, world px
+  const span = Math.pow(2, z);
+
+  let tiles = '';
+  for (let tx = Math.floor(left / TILE); tx <= Math.floor((left + W) / TILE); tx++) {
+    for (let ty = Math.floor(top / TILE); ty <= Math.floor((top + H) / TILE); ty++) {
+      if (ty < 0 || ty >= span) continue;             // above the pole
+      const wrapped = ((tx % span) + span) % span;    // across the date line
+      tiles += `<img src="https://tile.openstreetmap.org/${z}/${wrapped}/${ty}.png" `
+             + `alt="" loading="lazy" style="left:${tx * TILE - left}px;top:${ty * TILE - top}px">`;
+    }
+  }
+
+  const pins = pts.map(o =>
+    `<div class="pin" title="${esc(o.s.name)}" style="left:${projX(o.s.lon, z) - left}px;`
+    + `top:${projY(o.s.lat, z) - top}px">${o.i + 1}</div>`).join('');
+
+  return `<div class="map" style="height:${H}px">`
+       + `<div class="tiles">${tiles}</div>${pins}`
+       + `<div class="credit">&copy; <a href="https://www.openstreetmap.org/copyright" `
+       + `target="_blank" rel="noopener">OpenStreetMap</a></div></div>`;
+}
+
+function show(d) {
+  const p = d.plan, prefs = d.prefs, cur = prefs.currency;
+  const money = n => n > 0 ? `${cur} ${Math.round(n)}` : 'Free';
+  const when = prefs.on ? new Date(prefs.on + 'T12:00').toLocaleDateString(undefined,
+      {weekday:'long', day:'numeric', month:'long'}) : '';
+  const head = [prefs.location, when, `${cur} ${Math.round(p.total_cost)} for two`]
+      .filter(Boolean).join(' &middot; ');
+
+  // Half stars are rounded to the nearest whole for the glyphs; the number
+  // beside them is the real one.
+  const stars = r => '★'.repeat(Math.round(r)) + '☆'.repeat(5 - Math.round(r));
+
+  const mapHtml = routeMap(p.stops, 240);
+
+  const walkTime = s => !s.distance_m ? ''
+      : s.distance_m < 1000 ? `${s.distance_m} m away` : `${(s.distance_m/1000).toFixed(1)} km away`;
+
+  const stops = p.stops.map((s, i) => {
+    let badge = '';
+    if (s.rating != null) {
+      badge = `<div class="rate"><span class="stars">${stars(s.rating)}</span>`
+            + `<b>${s.rating.toFixed(1)}</b>`
+            + `<span>${s.ratings_count ? s.ratings_count.toLocaleString() + ' Google reviews' : 'on Google'}</span></div>`;
+    } else if (s.looked_up && !s.verified) {
+      badge = `<div class="unverified">Not found on Google Maps — check it exists</div>`;
+    }
+    // What kind of place it is, how far, and whether it will be open: the
+    // three things you want before committing to walking there.
+    const facts = [s.venue_kind, s.cuisine, walkTime(s)].filter(Boolean);
+    const bits = [];
+    if (facts.length) bits.push(`<div class="detail">${esc(facts.join(' · '))}</div>`);
+    if (s.address) bits.push(`<div class="detail"><b>Address:</b> ${esc(s.address)}</div>`);
+    if (s.opening_hours) bits.push(`<div class="detail"><b>Hours:</b> ${esc(s.opening_hours)}</div>`);
+    if (s.website) bits.push(`<div class="detail"><b>Site:</b> `
+        + `<a href="${esc(s.website)}" target="_blank" rel="noopener">${esc(s.website.replace(/^https?:\/\//,'').slice(0,40))}</a></div>`);
+    if (s.tip)     bits.push(`<div class="detail"><b>Tip:</b> ${esc(s.tip)}</div>`);
+    if (s.booking) bits.push(`<div class="detail"><b>Booking:</b> ${esc(s.booking)}</div>`);
+    if (!s.indoor && s.fallback) bits.push(`<div class="detail"><b>If it rains:</b> ${esc(s.fallback)}</div>`);
+    const links = [];
+    if (s.book_url) links.push(`<a class="btn" href="${esc(s.book_url)}" target="_blank" rel="noopener">Book</a>`);
+    if (s.map_url)  links.push(`<a class="btn ghost" href="${esc(s.map_url)}" target="_blank" rel="noopener">`
+                              + `${s.verified ? 'Open in Google Maps' : 'Map'}</a>`);
+    return `<div class="card stop" style="animation-delay:${i * 90}ms">
+        <div class="meta">${i+1} &middot; ${esc(s.start)} &middot; ${s.minutes} min &middot; ${money(s.cost)}</div>
+        <h3>${esc(s.name)}</h3>
+        ${badge}
+        <p class="why">${esc(s.why)}</p>
+        ${bits.join('')}
+        <div class="links">${links.join('')}</div>
+      </div>` + (s.travel_next ? `<div class="travel">&darr;&nbsp; ${esc(s.travel_next)}</div>` : '');
+  }).join('');
+
+  const notes = [['Wear', p.wear], ['Getting around', p.transport_note],
+                 ['Weather', p.weather_call], ['If it breaks', p.backup]]
+    .filter(([, v]) => v).map(([k, v]) => `<div class="detail"><b>${k}:</b> ${esc(v)}</div>`).join('');
+
+  // Checked the web just now - say so, and say where.
+  const sources = p.sources?.length
+    ? `<div class="sources"><h4>Checked ${p.sources.length} source${p.sources.length > 1 ? 's' : ''} just now</h4><ol>`
+      + p.sources.slice(0, 12).map(x =>
+          `<li><a href="${esc(x.url)}" target="_blank" rel="noopener">`
+          + `${esc(x.title || x.url.replace(/^https?:\/\/(www\.)?/, '').slice(0, 60))}</a></li>`).join('')
+      + `</ol></div>` : '';
+
+  const warn = p.warnings?.length
+    ? `<div class="card warn"><h4>Check before you commit</h4><ul>${
+        p.warnings.map(w => `<li>${esc(w)}</li>`).join('')}</ul></div>` : '';
+
+  // Google's terms require visible attribution and a route back to Maps
+  // wherever their ratings are shown. Do not remove this.
+  const rated = p.stops.some(s => s.rating != null);
+  const foot = (p.generated_by === 'offline'
+    ? 'Offline plan: no ANTHROPIC_API_KEY set, so stops are areas and venue types rather than real places.'
+    : 'Booking links may earn a commission. Prices and hours are estimates &mdash; check before you go.')
+    + (rated ? '<br>Ratings and place details from <b>Google Maps</b>.' : '');
+
+  $('#out').innerHTML = `
+    <div class="hero">
+      <p class="eyebrow">${head}</p>
+      <h2>${esc(p.title)}</h2>
+      <p class="pitch">${esc(p.pitch)}</p>
+    </div>
+    ${mapHtml}
+    <div class="arc"><b>${esc(d.arc)}</b>${
+      d.weather_brief && d.weather.source !== 'unknown' ? `<br>Forecast: ${esc(d.weather_brief)}` : ''}</div>
+    ${stops}
+    ${warn}
+    <div class="card" style="margin-top:18px">${notes}</div>
+    ${sources}
+    <p class="foot">${foot}</p>
+    <button class="go" type="button" id="again" style="margin-top:20px">Plan another</button>`;
+
+  deck.hidden = true;
+  $('#nav').style.display = 'none';
+  document.body.classList.add('done');
+  $('#out').classList.add('on');
+  $('#bar').style.width = '100%';
+  $('#count').textContent = '';
+  $('#again').onclick = () => {
+    $('#out').classList.remove('on');
+    deck.hidden = false;
+    $('#nav').style.display = '';
+    document.body.classList.remove('done');
+    $('#stale').classList.remove('on');
+    go(1);
+  };
+  scrollTo({top: 0, behavior: REDUCED ? 'auto' : 'smooth'});
+}
+
+/* ---- opening state --------------------------------------------------
+   If there is a saved plan, show it straight away - the app should open
+   to something useful. The questions are one tap behind it. */
+(function start() {
+  if (!SERVED) {
+    setStale('This is a preview of the page, not the running app — there is no planner '
+           + 'behind it. Run  python run.py --serve  and open http://127.0.0.1:8765 instead.');
+    $('#go').disabled = true;
+    $('#go').textContent = 'Not the running app';
+  }
+
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(LAST_PLAN) || 'null'); } catch {}
+
+  go(0);
+
+  if (!saved?.plan) return;
+
+  // Put the answers back, so changing one thing does not mean redoing all nine.
+  const p = saved.prefs || {};
+  for (const k of ['location','budget','currency','relationship_stage','clothing_style',
+                   'transportation','hours','party_note','lat','lon']) {
+    const el = document.getElementById(k);
+    if (el && p[k] != null && p[k] !== '') el.value = p[k];
+  }
+  if (Array.isArray(p.interests) && p.interests.length) {
+    $('#interests').value = p.interests.join(', ');
+    syncChips();
+  }
+  if (p.budget) { bRange.value = p.budget; showBudget(p.budget); }
+  if (p.currency) $('#cur_out').textContent = p.currency;
+  if (p.lat != null && p.lon != null) setAnchor(p.lat, p.lon, p.location);
+
+  show(saved);
+  const when = new Date(saved.saved || Date.now());
+  const today = when.toDateString() === new Date().toDateString();
+  setStale((navigator.onLine ? 'Your last plan, from ' : 'Offline — showing your last plan, from ')
+    + (today ? 'earlier today' : when.toLocaleDateString(undefined, {day:'numeric', month:'long'}))
+    + '. Plan another any time.');
+})();
+
+addEventListener('online', () => $('#stale').classList.remove('on'));
+</script>
+</body>
+</html>

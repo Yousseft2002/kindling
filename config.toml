@@ -1,0 +1,100 @@
+# ============================================================================
+# Date planner - configuration
+#
+# The taste lives in two places: the prompt in dateplanner/planner.py and the
+# rules in dateplanner/rules.py. This file holds the knobs you turn without
+# reading either of them.
+# ============================================================================
+
+[llm]
+# The app runs fully without an API key - you get a template itinerary that
+# names areas and venue types instead of venues. Set ANTHROPIC_API_KEY for
+# the real thing.
+enabled = true
+model = "claude-opus-5"
+# Date planning is a taste problem and rewards thinking. "high" costs more and
+# is visibly better at sequencing and at the logistics details.
+effort = "high"
+# Thinking is on by default on Opus 5 and its tokens count against this
+# ceiling, so 8000 risked truncating a five-stop itinerary mid-plan. 16000 is
+# the documented default for non-streaming requests.
+max_tokens = 16000
+
+# After the model answers, its plan is re-checked against rules.py. When that
+# finds real problems - over budget, a viewpoint after dark, a hop too far to
+# walk - send them back once and let it correct them. The corrected plan is
+# only kept if it actually has fewer problems, so a repair can never make an
+# itinerary worse. Costs one extra call on the plans that need it.
+repair = true
+max_repairs = 1
+
+# Before planning, a scouting pass searches the web for what is actually open
+# and what is on that night - which is the difference between a plausible
+# itinerary and a real one. Costs one extra call plus $0.01 per search.
+# Turn it off and the planner works from training data alone.
+web_search = true
+max_searches = 6
+research_effort = "medium"
+research_max_tokens = 8000
+# The tool version. web_search_20260209 adds dynamic filtering, which runs the
+# search inside code execution and cuts token use. Drop to web_search_20250305
+# if a request is rejected.
+search_tool = "web_search_20260209"
+
+
+[defaults]
+# Used when the CLI or the form leaves something out.
+budget = 150.0
+currency = "USD"
+relationship_stage = "getting_to_know"
+clothing_style = "smart_casual"
+transportation = "walking"
+hours = 5.0
+# Default start. Early enough that a sunset stop still works most of the year.
+start_time = "17:00"
+
+
+[server]
+host = "127.0.0.1"
+port = 8765
+
+
+# ---------------------------------------------------------------------------
+# Affiliate partner tags.
+#
+# Leave these empty until the programme has actually approved you. An empty
+# tag produces a clean, working search link with no tracking parameters; an
+# invented tag produces a broken link and, on some networks, a closed account.
+#
+#   opentable     - via Impact or Partnerize; pays per seated cover
+#   viator        - Viator Partner Programme; `pid`, percentage of tour price
+#   getyourguide  - GetYourGuide Partner; `partner_id`
+#   dice          - DICE, percentage of ticket price
+#
+# Commission rates are modelled in affiliates.PROVIDERS. Re-check them when
+# you sign up; published rates drift.
+# ---------------------------------------------------------------------------
+[partners]
+opentable = ""
+viator = ""
+getyourguide = ""
+dice = ""
+
+
+# ---------------------------------------------------------------------------
+# Real venue lookups: Google Places API.
+#
+# Turns each named venue into a real Google Maps link with its rating and
+# review count, and - more usefully - catches the case where the model named a
+# place that does not exist. Needs GOOGLE_MAPS_API_KEY in the environment or
+# in .env; without it the app falls back to plain Maps search links and no
+# ratings, exactly as before.
+#
+# Billed per request, roughly one per venue stop, so about 3-4 per plan.
+# Results are cached in memory for an hour. Google's terms allow storing place
+# IDs indefinitely but not other place content, which is why nothing here is
+# written to disk, and why the UI carries the required "Google Maps"
+# attribution. Do not remove it.
+# ---------------------------------------------------------------------------
+[places]
+enabled = true
