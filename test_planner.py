@@ -1295,9 +1295,31 @@ def test_jobs() -> None:
     check("the last phase is always done", full[-1] == "done", str(full))
 
     server.JOBS.clear()
+
+    # Whether the job is still running when `_start` returns is a race - an
+    # offline plan can finish first on a fast machine, which made this flaky.
+    # The property that actually matters is that `_start` does not wait for
+    # the plan, so hold the plan open and check it returned anyway.
+    import threading as _th
+    release = _th.Event()
+    real_plan = planner.plan
+
+    def slow(*a, **k):
+        release.wait(5)
+        return real_plan(*a, **k)
+
+    try:
+        planner.plan = slow
+        held = server._start(prefs(), cfg())
+        check("starting a plan does not wait for it", held.state == "running")
+        check("the job gets an id", len(held.id) == 16)
+        check("a running job reports a phase a human can read",
+              held.status()["label"] in planner.PHASES.values())
+    finally:
+        release.set()
+        planner.plan = real_plan
+
     job = server._start(prefs(), cfg())
-    check("starting a plan returns immediately", job.state == "running")
-    check("the job gets an id", len(job.id) == 16)
 
     for _ in range(80):                     # offline planning is fast
         if job.state != "running":
