@@ -112,7 +112,7 @@
   .top b{font-family:var(--serif);font-weight:600;font-size:17px;letter-spacing:-.01em}
   .bar{flex:1;height:4px;border-radius:99px;background:var(--line);overflow:hidden}
   .bar i{display:block;height:100%;width:0;border-radius:99px;background:var(--accent);
-         transition:width .5s var(--ease)}
+         transition:width .34s var(--ease)}
   .count{font-size:13px;color:var(--faint);font-variant-numeric:tabular-nums;min-width:38px;text-align:right}
 
   .banner{flex:none;margin-bottom:14px;padding:12px 16px;border-radius:14px;font-size:14.5px;
@@ -257,6 +257,14 @@
       color:var(--bg);font:inherit;font-weight:600;font-size:18px;cursor:pointer;
       transition:transform .16s var(--ease),opacity .2s}
   .go:hover:not(:disabled){transform:translateY(-2px)}
+  /* Touch has no hover. Without a press state every tap felt dead until the
+     screen moved, which reads as lag even when nothing is slow. */
+  .go:active:not(:disabled){transform:scale(.978)}
+  .btn:active{transform:scale(.96)}
+  .back:active{transform:scale(.92)}
+  .pin:active{transform:scale(.94)}
+  .chip:active{transform:scale(.95)}
+  .banner button:active{transform:scale(.95)}
   .go:disabled{opacity:.4;cursor:not-allowed}
   .back{flex:none;width:56px;height:56px;border-radius:50%;border:1.5px solid var(--line);
         background:transparent;color:var(--muted);font-size:20px;cursor:pointer;
@@ -286,7 +294,7 @@
        border-radius:18px;font-size:16px;color:var(--muted);line-height:1.75}
   .arc b{color:var(--ink);font-weight:600}
   .card{background:var(--card);border:1.5px solid var(--line);border-radius:20px;padding:22px}
-  .stop{margin-bottom:14px;animation:rise .5s var(--ease) backwards}
+  .stop{margin-bottom:14px;animation:rise .36s var(--ease) backwards}
   /* A photograph of the place beats any amount of adjective, and it is the
      single biggest thing separating this from a list of names. */
   .shot{margin:-22px -22px 14px;height:180px;overflow:hidden;border-radius:19px 19px 0 0;
@@ -313,7 +321,9 @@
   .map{position:relative;width:100%;height:240px;overflow:hidden;border-radius:20px;
        border:1.5px solid var(--line);background:var(--bg2);margin:0 0 20px}
   .map .tiles{position:absolute;inset:0}
-  .map img{position:absolute;width:256px;height:256px;border:0;display:block}
+  .map img{position:absolute;width:256px;height:256px;border:0;display:block;
+           opacity:0;transition:opacity .3s var(--ease)}
+  .map img.on{opacity:1}
   .map .pin{position:absolute;width:30px;height:30px;margin:-15px 0 0 -15px;
             border-radius:50%;background:var(--accent);color:#fff;font-size:14.5px;
             font-weight:700;display:flex;align-items:center;justify-content:center;
@@ -654,7 +664,7 @@ function measure() {
   const el = screens[step];
   if (el) stage.style.height = el.scrollHeight + 'px';
   // After the height transition the deck knows whether it overflows.
-  setTimeout(affordance, 520);
+  setTimeout(affordance, 360);   // just after the .34s stage move
 }
 
 const ENTER = ['enter-up', 'enter-down'];
@@ -1021,6 +1031,8 @@ function routeMap(stops, height) {
       // No loading="lazy" here. These tiles sit inside a short, clipped box,
       // so the browser decides most of them are off-screen and never fetches
       // them - leaving a map with two pins floating over empty cream.
+      // Faded in by `revealTiles` once each one lands, rather than having
+      // the map assemble itself in visible rectangles.
       tiles += `<img src="https://tile.openstreetmap.org/${z}/${wrapped}/${ty}.png" `
              + `alt="" style="left:${tx * TILE - left}px;top:${ty * TILE - top}px">`;
     }
@@ -1034,6 +1046,18 @@ function routeMap(stops, height) {
        + `<div class="tiles">${tiles}</div>${pins}`
        + `<div class="credit">&copy; <a href="https://www.openstreetmap.org/copyright" `
        + `target="_blank" rel="noopener">OpenStreetMap</a></div></div>`;
+}
+
+function revealTiles() {
+  // A tile served from cache can finish loading before any handler is
+  // attached, so `complete` has to be checked as well as listened for -
+  // otherwise the second plan you make has an invisible map.
+  for (const img of document.querySelectorAll('.map img')) {
+    if (img.complete && img.naturalWidth > 0) img.classList.add('on');
+    else img.addEventListener('load', () => img.classList.add('on'), {once: true});
+    // A tile that 404s should not leave a permanent hole in the fade.
+    img.addEventListener('error', () => img.classList.add('on'), {once: true});
+  }
 }
 
 function show(d) {
@@ -1086,7 +1110,9 @@ function show(d) {
     const blurb = s.blurb ? `<div class="blurb">${esc(s.blurb)}</div>` : '';
     const kind  = s.venue_kind ? `<span class="kind">${esc(s.venue_kind)}</span>` : '';
 
-    return `<div class="card stop" style="animation-delay:${i * 90}ms">
+    // Capped: an eight-stop plan should not take a second and a half to
+    // finish appearing.
+    return `<div class="card stop" style="animation-delay:${Math.min(i * 55, 220)}ms">
         ${shot}
         <div class="meta">${i+1} &middot; ${esc(s.start)} &middot; ${s.minutes} min &middot; ${money(s.cost)}</div>
         ${kind}
@@ -1139,6 +1165,7 @@ function show(d) {
     <p class="foot">${foot}</p>
     <button class="go" type="button" id="again" style="margin-top:20px">Plan another</button>`;
 
+  revealTiles();
   deck.hidden = true;
   affordance();
   $('#nav').style.display = 'none';

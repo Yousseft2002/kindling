@@ -1564,6 +1564,27 @@ def test_app_shell() -> None:
           "@keyframes arrive" in index)
     check("a chosen option card acknowledges the tap", "@keyframes chose" in index)
 
+    # Touch has no hover, so without a press state every tap reads as lag.
+    for _sel in (".go:active", ".btn:active", ".back:active", ".chip:active"):
+        check(f"{_sel} gives press feedback", _sel in index)
+
+    # The scroll-affordance check was timed to the old .5s stage and kept
+    # firing after the move had finished.
+    check("the affordance check is timed to the current stage duration",
+          "setTimeout(affordance, 360)" in index)
+    check("the progress bar shares the same clock",
+          "transition:width .34s" in index)
+
+    # A tile served from cache finishes before any handler is attached, so
+    # `complete` has to be checked too - otherwise the second plan you make
+    # has an invisible map.
+    check("map tiles fade in", ".map img.on{opacity:1}" in index)
+    check("a cached tile is revealed rather than left invisible",
+          "img.complete && img.naturalWidth > 0" in index)
+    check("a failed tile does not leave a permanent hole",
+          "'error'" in index)
+    check("the stop stagger is capped", "Math.min(i * 55, 220)" in index)
+
     # The secret must never be serialisable out of the process.
     srv = (Path(server.__file__)).read_text(encoding="utf-8")
     check("the server reports key presence as a boolean, never the key",
