@@ -23,7 +23,7 @@ python run.py --serve --lan    # same, reachable from your phone
 
 ```bash
 pip install -r requirements.txt
-python test_planner.py                           # 325 offline tests, no key, no spend
+python test_planner.py                           # 373 offline tests, no key, no spend
 python run.py -l "Brooklyn" -b 90 --dry-run      # a real plan, zero API cost
 python run.py --serve                            # the app
 ```
@@ -88,9 +88,23 @@ Notes on the build, since a few things are load-bearing:
 - **`margin:auto` centres the stage, not `align-items:center`** — centring a
   flex child taller than its container clips the top off in every browser, and
   five option cards are taller than a phone.
+- **Motion carries direction.** Forward rises from below, back drops from
+  above, and the outgoing screen leaves the way you are travelling. It used to
+  animate identically both ways, which made the movement decorative rather than
+  informative. Going back also skips the stagger — you have already read the
+  question and you want to change your answer.
+- **One clock.** Screens, their contents and the stage height all land inside
+  .34s. They used to take .42s, .74s and .5s respectively, so the button
+  arrived after the sentence it belonged to.
 - **All motion is decoration, never information.** `prefers-reduced-motion`
   collapses every transition, and the auto-advance fires immediately instead of
   after a beat. Every screen is reachable and readable with all of it off.
+  Note that the override must name every direction class: `.screen.enter-up` is
+  a two-class selector and out-specifies a bare `.screen{transform:none}`, so a
+  rename silently gives motion back to people who asked for none. A test pins
+  this.
+- **Touch has no hover**, so every interactive element has a `:active` press
+  state. Without one, a tap reads as lag even when nothing is slow.
 - Display type is Fraunces from Google Fonts, with Georgia and the system
   serif behind it. The app already needs the network for the forecast and the
   planner, so a webfont costs nothing extra — and it degrades to the fallback
@@ -176,7 +190,8 @@ prefs ─▶ geo ─▶ weather ─▶ scout ─▶ rules.brief ─▶ Claude �
 | `dateplanner/models.py` | `Prefs` in, `Plan` out. Doubles as the structured-output schema |
 | `dateplanner/geo.py` | Place search, reverse geocoding, the coordinates everything hangs off |
 | `dateplanner/places.py` | Venue lookups: picks OSM or Google, attaches details, flags invented places |
-| `dateplanner/osm.py` | The keyless provider: OpenStreetMap venue data |
+| `dateplanner/osm.py` | The keyless provider: OpenStreetMap venue search and data |
+| `dateplanner/wiki.py` | Photographs and a line of context, from Wikipedia |
 | `dateplanner/research.py` | The scouting pass: web search for what is actually on |
 | `dateplanner/weather.py` | Forecast for those coordinates, golden hour, typed overrides |
 | `dateplanner/affiliates.py` | Booking links and the commission model |
@@ -304,9 +319,37 @@ next most useful knobs.
 
 ## Real places — no key required
 
-Every venue the planner names is looked up in real map data, and the results
-page opens with a **route map**: OpenStreetMap tiles with a numbered pin on each
-stop, so you can see the shape of the evening before reading a word of it.
+**Without any API key at all**, the planner asks OpenStreetMap what is actually
+around you and builds the evening from what comes back. In Boston that is:
+
+```
+16:30  New England Aquarium     Aquarium · 488 m away · Mo-Su 09:00-18:00
+17:57  JJ Foleys Bar & Grille   Bar · 523 m away
+19:29  Kaze                     Restaurant · japanese · Tu 17:00-02:00
+```
+
+Real names, real addresses, real hours, real websites. It used to say "a
+specialist coffee bar or natural wine bar in a walkable part of town" — true,
+useless, and it read like a computer because it was one describing a place it
+had never heard of.
+
+**The answers change the plan.** Say "aquarium" and the evening is built around
+one; "jazz" gets live music; "art" gets a museum; rain keeps it indoors instead
+of marching two people up a hill.
+
+**Opening hours are a constraint, not a decoration.** The first Boston plan this
+produced put the aquarium at 18:02–19:17 against a closing time of 18:00.
+Whatever shuts first now goes first, dinner stays last, and anything that still
+overruns gets flagged.
+
+**Photographs**, from Wikipedia, for the stop notable enough to have an article
+— which is usually the one carrying the evening's visual weight. The match is
+verified against the article's own coordinates, not its name: "Chart House"
+alone matches a chain on another continent.
+
+The results page opens with a **route map**: OpenStreetMap tiles with a numbered
+pin on each stop, so you can see the shape of the evening before reading a word
+of it.
 
 Each stop then carries what you actually want before deciding to walk
 somewhere:
