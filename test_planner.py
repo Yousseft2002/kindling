@@ -1535,6 +1535,35 @@ def test_app_shell() -> None:
     check("short viewports get a compact layout", "@media (max-height:860px)" in index)
     check("the no-key warning points at the diagnostic", "--check-key" in index)
 
+    # --- transitions ----------------------------------------------------
+    # Going back used to animate identically to going forward: the entering
+    # screen always started below, so the motion said nothing about which way
+    # you had moved.
+    for _cls in ("enter-up", "enter-down", "exit-up", "exit-down"):
+        check(f"the deck has a {_cls} state", f".screen.{_cls}{{" in index)
+    check("direction is taken from the direction of travel",
+          "back ? 'enter-down' : 'enter-up'" in index
+          and "back ? 'exit-down' : 'exit-up'" in index)
+    check("going back skips the stagger", ".screen.active.quick > *" in index)
+
+    # The reduced-motion override has to name every direction class:
+    # `.screen.enter-up` is a two-class selector and out-specifies a bare
+    # `.screen{transform:none}`, so renaming the classes silently handed
+    # motion back to people who had asked for none.
+    _reduced = index[index.index("@media (prefers-reduced-motion"):]
+    _reduced = _reduced[:_reduced.index("</style>")]
+    for _cls in ("enter-up", "enter-down", "exit-up", "exit-down"):
+        check(f"reduced motion also neutralises {_cls}", _cls in _reduced)
+    check("reduced motion stops the results animation too",
+          "#out.on{animation:none}" in _reduced)
+
+    # One clock for the whole gesture, rather than three.
+    check("the stage and the screens share a duration",
+          "transition:height .34s" in index and "transform .34s" in index)
+    check("the results view arrives rather than cutting in",
+          "@keyframes arrive" in index)
+    check("a chosen option card acknowledges the tap", "@keyframes chose" in index)
+
     # The secret must never be serialisable out of the process.
     srv = (Path(server.__file__)).read_text(encoding="utf-8")
     check("the server reports key presence as a boolean, never the key",

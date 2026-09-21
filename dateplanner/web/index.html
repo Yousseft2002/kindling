@@ -132,22 +132,38 @@
     padding:9px 16px;font:inherit;font-size:13.5px;font-weight:600;cursor:pointer;flex:none}
 
   /* ---- the deck ---- */
-  .stage{position:relative;width:100%;margin:auto 0;transition:height .5s var(--ease)}
+  /* One duration for the whole gesture. Previously the screen took .42s, the
+     text .45s plus up to .29s of stagger, and the stage height .5s - three
+     clocks, and the slowest of them was the sentence you were trying to
+     read. Everything now lands inside .34s. */
+  .stage{position:relative;width:100%;margin:auto 0;transition:height .34s var(--ease)}
+
   .screen{position:absolute;inset:0 0 auto 0;opacity:0;pointer-events:none;
-          transform:translateY(26px) scale(.985);
-          transition:opacity .42s var(--ease),transform .42s var(--ease);}
+          transform:translateY(0) scale(.99);
+          transition:opacity .3s var(--ease),transform .34s var(--ease)}
+
+  /* Direction of travel. The entering screen starts on the far side of
+     wherever you came from, so going back looks like going back - it used to
+     animate identically to going forward, which made the motion decorative
+     rather than informative. */
+  .screen.enter-up{transform:translateY(30px) scale(.99)}     /* forward */
+  .screen.enter-down{transform:translateY(-30px) scale(.99)}  /* back */
   .screen.active{opacity:1;pointer-events:auto;transform:none}
-  .screen.back{transform:translateY(-26px) scale(.985)}
+  .screen.exit-up{opacity:0;transform:translateY(-24px) scale(.99)}
+  .screen.exit-down{opacity:0;transform:translateY(24px) scale(.99)}
 
   /* Stagger the contents in, so a screen assembles rather than appears. */
-  .screen > *{opacity:0;transform:translateY(14px);
-              transition:opacity .45s var(--ease),transform .45s var(--ease)}
+  .screen > *{opacity:0;transform:translateY(12px);
+              transition:opacity .3s var(--ease),transform .32s var(--ease)}
   .screen.active > *{opacity:1;transform:none}
-  .screen.active > :nth-child(1){transition-delay:.05s}
-  .screen.active > :nth-child(2){transition-delay:.11s}
-  .screen.active > :nth-child(3){transition-delay:.17s}
-  .screen.active > :nth-child(4){transition-delay:.23s}
-  .screen.active > :nth-child(5){transition-delay:.29s}
+  .screen.active > :nth-child(1){transition-delay:.04s}
+  .screen.active > :nth-child(2){transition-delay:.08s}
+  .screen.active > :nth-child(3){transition-delay:.12s}
+  .screen.active > :nth-child(4){transition-delay:.16s}
+  .screen.active > :nth-child(5){transition-delay:.20s}
+  /* Going back to a question you have already read: no assembling. You know
+     what it says; you want to change your answer. */
+  .screen.active.quick > *{transition-delay:0s}
 
   .eyebrow{font-size:12.5px;letter-spacing:.16em;text-transform:uppercase;
            color:var(--accent);font-weight:600;margin:0 0 14px}
@@ -182,6 +198,11 @@
        transition:transform .16s var(--ease),border-color .2s,box-shadow .2s}
   .opt:hover{transform:translateY(-2px);border-color:var(--accent)}
   .opt.on{border-color:var(--accent);box-shadow:0 0 0 4px var(--accent-soft)}
+  .opt:active{transform:scale(.985)}
+  /* A chosen card pulses once before the screen moves on, so the advance
+     reads as a consequence of the tap. */
+  .opt.chose{animation:chose .22s var(--ease)}
+  @keyframes chose{50%{transform:scale(1.02);box-shadow:0 0 0 9px var(--accent-soft)}}
   .opt b{display:block;font-family:var(--serif);font-size:20px;font-weight:600;
          letter-spacing:-.01em;margin-bottom:3px}
   .opt span{display:block;font-size:14.5px;color:var(--muted);line-height:1.45}
@@ -252,7 +273,11 @@
 
   /* ---- results ---- */
   #out{display:none}
-  #out.on{display:block}
+  /* The deck disappears and the plan arrives. Everything else in the app
+     animates; this was a hard cut, and it is the one moment the user has
+     been waiting a minute for. */
+  #out.on{display:block;animation:arrive .42s var(--ease) both}
+  @keyframes arrive{from{opacity:0;transform:translateY(18px)}}
   .hero{margin-bottom:22px}
   .hero h2{font-family:var(--serif);font-size:clamp(28px,6.6vw,40px);line-height:1.1;
            margin:0 0 10px;font-weight:600;letter-spacing:-.02em}
@@ -356,8 +381,14 @@
   @media (prefers-reduced-motion:reduce){
     *,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;
                          transition-duration:.001ms!important}
-    .screen{transform:none}
+    /* These have to name every direction class. `.screen.enter-up` is a
+       two-class selector and quietly out-specifies a bare `.screen` override,
+       which is how a rename reintroduces motion for people who asked for
+       none. */
+    .screen,.screen.enter-up,.screen.enter-down,
+    .screen.exit-up,.screen.exit-down{transform:none}
     .screen > *{transform:none}
+    #out.on{animation:none}
   }
 </style>
 </head>
@@ -626,16 +657,21 @@ function measure() {
   setTimeout(affordance, 520);
 }
 
+const ENTER = ['enter-up', 'enter-down'];
+const EXIT = ['exit-up', 'exit-down'];
+
 function go(next, back = false) {
   if (next < 0 || next >= screens.length) return;
   const leaving = screens[step];
-  if (leaving) {
-    leaving.classList.remove('active');
-    leaving.classList.toggle('back', !back);
-  }
   step = next;
   const el = screens[step];
-  el.classList.remove('back');
+
+  // The entering screen starts on the far side of the direction of travel,
+  // and skips the stagger when you are going back to something you have
+  // already read.
+  el.classList.remove('active', ...EXIT, 'quick');
+  el.classList.add(back ? 'enter-down' : 'enter-up');
+  if (back) el.classList.add('quick');
 
   // Flush the start state synchronously rather than waiting a frame.
   //
@@ -647,7 +683,15 @@ function go(next, back = false) {
   // flush, with no race and no dependency on the page being visible.
   void el.offsetWidth;
 
+  el.classList.remove(...ENTER);
   el.classList.add('active');
+
+  // The outgoing screen leaves the way you are travelling.
+  if (leaving && leaving !== el) {
+    leaving.classList.remove('active', 'quick');
+    leaving.classList.add(back ? 'exit-down' : 'exit-up');
+  }
+
   measure();
   chrome();
   const focus = el.dataset.focus && document.getElementById(el.dataset.focus);
@@ -712,7 +756,11 @@ fetch('/api/options').then(r => r.json()).then(opts => {
       // That is the whole appeal of one-thing-per-screen.
       b.onclick = () => {
         store.value = value;
-        [...box.children].forEach(c => c.classList.toggle('on', c === b));
+        [...box.children].forEach(c => {
+          c.classList.toggle('on', c === b);
+          c.classList.remove('chose');
+        });
+        if (!REDUCED) b.classList.add('chose');
         setTimeout(() => go(step + 1), REDUCED ? 0 : 220);
       };
       box.appendChild(b);
