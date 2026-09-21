@@ -25,6 +25,7 @@ same service the app already depends on for reverse geocoding.
 from __future__ import annotations
 
 import logging
+import re
 
 from . import cache, geo
 from .http import get_json
@@ -126,6 +127,84 @@ def lookup(name: str, lat: float | None, lon: float | None,
     return match
 
 
+# Category keywords per slot in an evening, in the order they are tried. The
+# first that returns anything wins, so the fallbacks matter: not every
+# neighbourhood has an aquarium, but almost all of them have a park.
+SLOTS = {
+    "drinks": ["bar", "pub", "wine bar"],
+    "food": ["restaurant", "bistro"],
+    "coffee": ["cafe", "coffee shop"],
+    "music": ["live music venue", "jazz club"],
+    "show": ["theatre", "cinema"],
+    "activity": ["museum", "gallery"],
+    "aquarium": ["aquarium", "zoo"],
+    "viewpoint": ["viewpoint", "park"],
+    "shopping": ["market", "bookshop"],
+}
+
+# Searching "aquarium" in Boston returns the New England Aquarium and then
+# four subway stops named after it. Anything in these OSM categories is
+# infrastructure, not somewhere to take a date.
+NOISE_CATEGORIES = {"railway", "highway", "public_transport", "barrier", "waterway"}
+NOISE_TYPES = {
+    "station", "platform", "stop", "stop_position", "bus_stop", "halt",
+    "subway_entrance", "tram_stop", "parking", "parking_entrance", "toilets",
+    "bicycle_parking", "taxi", "fuel", "atm", "bench", "waste_basket",
+}
+
+
+def nearby(slot: str, lat: float | None, lon: float | None,
+           transport: str = "walking", limit: int = 8) -> list[Match]:
+    """Real places near a point, for one slot in the evening.
+
+    This is what lets the app say "drinks at The Alley Bar, then the New
+    England Aquarium, then dinner at Trillium" with no API key at all, rather
+    than "a specialist coffee bar in a walkable part of town" - which is the
+    most an honest template planner with no data can offer.
+    """
+    if lat is None or lon is None:
+        return []
+
+    key = ("near", slot, round(lat, 3), round(lon, 3), transport)
+    hit = _venues.get(key)
+    if hit is not None:
+        return list(hit)
+
+    box = BOX_DEG.get(transport, DEFAULT_BOX)
+    out: list[Match] = []
+
+    for word in SLOTS.get(slot, [slot])[:2]:      # two tries, then give up
+        geo.nominatim_wait()
+        data = get_json(SEARCH_URL, {
+            "q": word,
+            "format": "jsonv2",
+            "limit": limit * 2,                   # room to drop the noise
+            "addressdetails": 1,
+            "extratags": 1,
+            "viewbox": f"{lon - box},{lat + box},{lon + box},{lat - box}",
+            "bounded": 1,
+        })
+        if not data:
+            continue
+        out = [m for m in (_parse([r]) for r in data if _usable(r)) if m][:limit]
+        if out:
+            break
+
+    if out:
+        _venues.set(key, out)
+    log.info("osm: %d candidates for %r near %.3f,%.3f", len(out), slot, lat, lon)
+    return list(out)
+
+
+def _usable(r: dict) -> bool:
+    """Drop transit stops, car parks and anything else that is not a venue."""
+    if not (r.get("name") or "").strip():
+        return False
+    if r.get("category") in NOISE_CATEGORIES or r.get("class") in NOISE_CATEGORIES:
+        return False
+    return r.get("type") not in NOISE_TYPES
+
+
 def _parse(results: list) -> Match | None:
     """Split out so the mapping can be tested against a captured payload."""
     if not results:
@@ -157,6 +236,29 @@ def _parse(results: list) -> Match | None:
         phone=extra.get("phone") or extra.get("contact:phone") or "",
         address=address,
     )
+
+
+def closes_at(hours: str) -> int | None:
+    """Best-effort closing time, in minutes past midnight. None if unreadable.
+
+    OSM opening_hours is a small language and this is not a parser for it -
+    it takes the last clock time in the string, which is the closing time in
+    every common shape:
+
+        "Mo-Fr 09:00-18:00; Sa,Su 09:00-18:00"   -> 18:00
+        "Tu 17:00-02:00, We-Mo 12:00-02:00"      -> 02:00, i.e. open late
+
+    A result before noon means the place shuts after midnight, which is not a
+    constraint any evening is going to hit, so it is reported as no limit.
+    """
+    if not hours:
+        return None
+    found = re.findall(r"\b([0-2]?\d):([0-5]\d)\b", hours)
+    if not found:
+        return None
+    h, m = found[-1]
+    mins = int(h) * 60 + int(m)
+    return None if mins < 12 * 60 else mins
 
 
 def label_for(kind: str) -> str:

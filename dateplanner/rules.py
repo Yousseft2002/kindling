@@ -18,6 +18,7 @@ Everything else is plumbing.
 
 from __future__ import annotations
 
+from . import osm
 from .models import MAX_HOP_MINUTES, STYLE_RANK, VENUE_RANK, Plan, Prefs, Weather
 
 # How far over the stated budget a plan may land before we complain. People
@@ -279,6 +280,21 @@ def check(plan: Plan, prefs: Prefs, weather: Weather) -> list[str]:
             out.append(
                 f"'{s.name}' is rated {s.rating:.1f} on Google across "
                 f"{s.ratings_count:,} reviews."
+            )
+
+    # --- will it still be open -----------------------------------------
+    # The hours come back with the venue lookup, and a plan that has you
+    # arriving at an aquarium two minutes after it shuts is worse than one
+    # that never mentioned an aquarium.
+    for s in plan.stops:
+        shut = osm.closes_at(s.opening_hours)
+        if shut is None:
+            continue
+        ends = _mins(s.end)
+        if ends is not None and ends > shut:
+            out.append(
+                f"'{s.name}' closes at {shut // 60:02d}:{shut % 60:02d}, and this has you "
+                f"there until {s.end}. Move it earlier or pick somewhere else."
             )
 
     # --- specificity ---------------------------------------------------

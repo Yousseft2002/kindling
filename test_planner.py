@@ -39,6 +39,34 @@ def no_network(*a, **kw):
     )
 
 
+def fake_venue(name, lat=38.7223, lon=-9.1393, kind="Bar", cuisine="",
+               hours="", site="", address="1 Test Street, Lisbon"):
+    from dateplanner.osm import Match
+    return Match(name=name, lat=lat, lon=lon, kind=kind, cuisine=cuisine,
+                 opening_hours=hours, website=site, address=address)
+
+
+# Candidates the stubbed lookup hands back, so the offline planner can be
+# exercised properly - it composes real evenings from real venues now, and a
+# test that fed it nothing would only ever prove the placeholder path works.
+VENUES = {
+    "drinks": [fake_venue("The Alley Bar", kind="Bar", hours="Mo-Su 16:00-01:00")],
+    "coffee": [fake_venue("Copenhagen Coffee Lab", kind="Café", hours="Mo-Su 08:00-19:00")],
+    "food": [fake_venue("Taberna Real", kind="Restaurant", cuisine="portuguese",
+                        hours="Tu-Su 19:00-23:30")],
+    "aquarium": [fake_venue("Oceanario de Lisboa", lat=38.7633, lon=-9.0950,
+                            kind="Aquarium", hours="Mo-Su 10:00-18:00")],
+    "activity": [fake_venue("Museu do Aljube", kind="Museum", hours="Tu-Su 10:00-18:00")],
+    "music": [fake_venue("Hot Clube de Portugal", kind="Bar", hours="Tu-Sa 22:00-02:00")],
+    "viewpoint": [fake_venue("Miradouro da Graca", kind="Viewpoint")],
+    "show": [], "shopping": [],
+}
+
+
+def fake_nearby(slot, lat, lon, transport="walking", limit=8):
+    return list(VENUES.get(slot, []))
+
+
 def cfg(**kw) -> dict:
     """Config for tests. Venue lookups are off unless a test switches them on,
     so `planner.plan` never reaches out to map data."""
@@ -547,6 +575,62 @@ def test_offline_planner() -> None:
     # The sunset walk has to land in the light, not after it.
     opener = p.stops[0]
     check("the outdoor opener starts before sunset", opener.start < "19:30", opener.start)
+
+    # --- it builds evenings out of real places now ----------------------
+    boston = planner._offline_plan(prefs(interests=["aquarium"]), DRY)
+    names = [s.name for s in boston.stops]
+    check("the keyless plan names real venues, not venue types",
+          "Oceanario de Lisboa" in names, str(names))
+    check("a real venue is marked verified without a second lookup",
+          all(s.verified for s in boston.stops
+              if s.name in ("Oceanario de Lisboa", "The Alley Bar", "Taberna Real")))
+    check("a real venue carries coordinates, so it lands on the map",
+          all(s.lat is not None for s in boston.stops if s.verified))
+    check("a real venue carries its opening hours",
+          any(s.opening_hours for s in boston.stops))
+
+    # The answers have to change the plan, or asking for them is theatre.
+    jazz = [s.name for s in planner._offline_plan(prefs(interests=["jazz"]), DRY).stops]
+    art = [s.name for s in planner._offline_plan(prefs(interests=["art"]), DRY).stops]
+    check("saying 'aquarium' puts an aquarium in the evening",
+          "Oceanario de Lisboa" in names)
+    check("saying 'jazz' puts live music in it instead",
+          "Hot Clube de Portugal" in jazz, str(jazz))
+    check("saying 'art' puts a museum in it instead",
+          "Museu do Aljube" in art, str(art))
+    check("three different answers give three different evenings",
+          len({tuple(names), tuple(jazz), tuple(art)}) == 3)
+
+    wet_kinds = [s.kind for s in planner._offline_plan(prefs(weather=WET), WET).stops]
+    check("rain keeps the evening indoors", "viewpoint" not in wet_kinds, str(wet_kinds))
+
+    # --- closing times are a constraint, not decoration -----------------
+    early = planner._offline_plan(
+        prefs(interests=["aquarium"], start_time=time(16, 30)), DRY)
+    aq = next(s for s in early.stops if "Oceanario" in s.name)
+    shut = planner.osm.closes_at(aq.opening_hours)
+    check("a venue that closes early is visited first",
+          early.stops[0].name == aq.name, str([s.name for s in early.stops]))
+    check("the plan does not have you there after closing",
+          rules._mins(aq.end) <= shut, f"{aq.start}-{aq.end} vs close {shut}")
+    check("reordering keeps the evening's own start time",
+          early.stops[0].start == "16:30", early.stops[0].start)
+    check("reordering leaves no dangling travel on the last stop",
+          early.stops[-1].travel_minutes == 0 and not early.stops[-1].travel_next)
+
+    # --- nothing nearby -------------------------------------------------
+    real_nearby = planner.osm.nearby
+    try:
+        planner.osm.nearby = lambda *a, **k: []
+        bare = planner._offline_plan(prefs(), DRY)
+        check("with nothing nearby it still produces an evening", len(bare.stops) >= 2)
+        check("with nothing nearby it invents no venue names",
+              all(not s.verified for s in bare.stops))
+        check("with nothing nearby it says what to look for instead",
+              any("do not build the night around it" in s.why for s in bare.stops),
+              str([s.why[:44] for s in bare.stops]))
+    finally:
+        planner.osm.nearby = real_nearby
 
     check("Stop.end is start plus duration",
           stop(start="19:00", minutes=90).end == "20:30",
@@ -1484,10 +1568,20 @@ def main() -> int:
     # that holds a reference - a subtlety that let four tests quietly call
     # Nominatim for a while.
     from dateplanner import http as _http, osm as _osm, places as _places
-    for _mod in (_http, geo, _osm, wx, _places):
+    from dateplanner import wiki as _wiki
+    for _mod in (_http, geo, _osm, wx, _places, _wiki):
         for _name in ("get_json", "post_json"):
             if hasattr(_mod, _name):
                 setattr(_mod, _name, no_network)
+
+    # The offline planner composes evenings from real nearby venues, so give
+    # it a stubbed source rather than a network.
+    _osm.nearby = fake_nearby
+    planner.osm.nearby = fake_nearby
+    # Wikipedia photos are a network call too. Off by default; the wiki tests
+    # drive `_parse` directly against captured payloads.
+    _wiki.look = lambda *a, **k: None
+    planner.wiki.look = _wiki.look
 
     for fn in (test_rules, test_weather, test_geo, test_places, test_offline_planner, test_fit_window,
                test_affiliates, test_model_request, test_cost, test_research, test_repair,

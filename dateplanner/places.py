@@ -40,7 +40,7 @@ import os
 
 from urllib.parse import quote_plus
 
-from . import cache, geo, osm
+from . import cache, geo, osm, wiki
 from .http import post_json
 
 log = logging.getLogger(__name__)
@@ -68,6 +68,11 @@ VERIFIABLE = {"food", "drinks", "coffee", "music", "show", "activity", "shopping
 # the route map - the first stop of an evening is usually one of these, and
 # leaving it off makes the map start at the second pin.
 LOCATABLE = VERIFIABLE | {"viewpoint", "walk"}
+
+# Kinds worth asking Wikipedia about. An aquarium, a museum or a theatre has
+# an article with a photograph; a neighbourhood wine bar does not, and asking
+# only burns a request to be told so.
+PHOTO_KINDS = {"activity", "show", "music", "viewpoint", "walk"}
 
 # How far around the anchor to look, by transport mode. Wider than the
 # planner's own radius: a venue slightly outside the walking radius is still
@@ -245,6 +250,16 @@ def enrich(plan, prefs) -> int:
 
         stop.verified = True
         found += 1
+
+        # A photograph, for the stops that have one. Restaurants and small
+        # bars do not, and that is fine - this is about the one stop in the
+        # evening that carries the visual weight.
+        if stop.kind in PHOTO_KINDS:
+            shot = wiki.look(stop.name, prefs.location, stop.lat or prefs.lat,
+                             stop.lon or prefs.lon)
+            if shot:
+                stop.photo, stop.blurb = shot.photo, shot.blurb
+                stop.photo_credit = shot.url
 
     if tried:
         log.info("places: matched %d of %d venue stops via %s", found, tried, provider())

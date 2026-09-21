@@ -4,11 +4,15 @@
 is cached, so it must stay byte-identical between runs - everything that varies
 per request goes in the user message.
 
-The app runs without an API key: `_offline_plan` produces a real, structurally
-valid itinerary from templates. It names neighbourhoods and venue types instead
-of venues, because inventing restaurant names offline would be worse than
-useless. That path exists so the UI, the rules, the links and the tests can all
-be exercised for free.
+The app runs without an API key, and not as a degraded demo: `_offline_plan`
+asks OpenStreetMap what is actually around the user and composes an evening
+out of real, named places - drinks at a real bar, the New England Aquarium,
+dinner at a real restaurant. It reads the opening hours it gets back and
+orders the night around them, because an aquarium that shuts at six is a
+constraint and not a detail.
+
+What it cannot do without the model is judgement: why *these* two people
+should go *there*, in that order, on that night. That is what the key buys.
 """
 
 from __future__ import annotations
@@ -19,7 +23,7 @@ from datetime import date, time, timedelta
 
 import anthropic
 
-from . import affiliates, geo, places, research as scout, rules, weather as wx
+from . import affiliates, geo, osm, places, research as scout, rules, weather as wx, wiki
 from .models import Plan, Prefs, Stop, Usage, Weather
 
 log = logging.getLogger(__name__)
@@ -472,121 +476,353 @@ def _restart(stops: list[Stop]) -> None:
         t += stop.minutes + stop.travel_minutes
 
 
-def _offline_plan(prefs: Prefs, w: Weather) -> Plan:
-    sr = rules.stage_rules(prefs.relationship_stage)
-    split = SPLIT.get(prefs.relationship_stage, SPLIT["getting_to_know"])
-    interest = prefs.interests[0] if prefs.interests else ""
-    near = f" near the {interest} district" if interest else " in a walkable part of town"
-    legs = LEGS.get(prefs.relationship_stage, LEGS["default"])
-    wet = w.is_wet
+def _slots_for(prefs: Prefs, w: Weather) -> list[str]:
+    """Which kinds of stop this particular evening should be made of.
 
-    # Anchor the opener to golden hour when we know it, so the outdoor stop
-    # lands in the light rather than after it.
+    This is where the answers stop being decoration. Someone who said
+    "aquarium" and someone who said "jazz" should not get the same shape of
+    night, and on a first date in the rain neither of them should be marched
+    up a hill to a viewpoint.
+    """
+    said = " ".join(prefs.interests).lower()
+
+    def wants(*words):
+        return any(x in said for x in words)
+
+    # The middle of the evening: the thing you actually go *to*. Read the
+    # interests first, because that is the answer with the most signal in it.
+    if wants("aquarium", "fish", "animal", "zoo"):
+        anchor = "aquarium"
+    elif wants("music", "jazz", "gig", "band", "live"):
+        anchor = "music"
+    elif wants("film", "cinema", "movie", "theatre", "theater", "comedy"):
+        anchor = "show"
+    elif wants("art", "museum", "history", "gallery", "exhibition"):
+        anchor = "activity"
+    elif wants("book", "vintage", "record", "market", "shopping"):
+        anchor = "shopping"
+    elif w.is_wet or w.is_cold:
+        anchor = "activity"          # indoors, because outside is miserable
+    else:
+        anchor = "viewpoint"
+
+    # Drinks first is the classic opener: it is cheap, it is short, and it
+    # gives you something to do with your hands while you work out whether
+    # you like each other.
+    opener = "coffee" if prefs.relationship_stage == "first_date" and prefs.start_time \
+        and prefs.start_time.hour < 17 else "drinks"
+
+    if prefs.relationship_stage == "first_date":
+        return [opener, anchor, "food"]
+
+    slots = [opener, anchor, "food"]
+    if prefs.relationship_stage in ("dating", "long_term", "special_occasion"):
+        slots.append("music")
+    return slots
+
+
+def _pick(candidates: list, used: set) -> object | None:
+    """Nearest unused candidate, preferring ones with published hours.
+
+    Published opening hours are a decent proxy for a place someone actually
+    maintains, and they let the plan say when the kitchen shuts.
+    """
+    fresh = [c for c in candidates if c.name.lower() not in used]
+    if not fresh:
+        return None
+    fresh.sort(key=lambda c: (0 if c.opening_hours else 1))
+    return fresh[0]
+
+
+# What to say about each kind of stop. Written to sound like a person who has
+# been there, because the alternative - "a specialist coffee bar in a walkable
+# part of town" - is what this planner used to say, and it reads like a form
+# letter.
+BLURB = {
+    "drinks": [
+        "Start here. One drink, somewhere with a bit of noise, while you work out what kind of night this is.",
+        "A drink first: cheap, short, and it gives you something to do with your hands.",
+    ],
+    "coffee": [
+        "Coffee first - low stakes, easy to leave, and you can always upgrade to a drink after.",
+        "Somewhere to sit down before anything is decided.",
+    ],
+    "aquarium": [
+        "The good part of the evening. Nobody runs out of things to say in front of a tank of fish.",
+        "This is the stop that does the work: something to look at, and something to react to.",
+    ],
+    "activity": [
+        "The part you will actually talk about afterwards. Wander, disagree about something, move on.",
+        "Enough to look at that the conversation writes itself.",
+    ],
+    "music": [
+        "If the night is still going, this is where it goes. Optional by design.",
+        "Something to end on that is not another drink in another room.",
+    ],
+    "show": [
+        "The anchor of the evening - check what is actually on before you commit.",
+        "Book this one. Turning up hopeful is how you end up eating crisps for dinner.",
+    ],
+    "viewpoint": [
+        "Free, outdoors, and the light does the work for you.",
+        "Start above the noise. It costs nothing and it sets the whole evening up.",
+    ],
+    "shopping": [
+        "Twenty minutes of poking about. You learn more about someone here than over dinner.",
+        "Cheap, warm, and full of things to have an opinion about.",
+    ],
+    "food": [
+        "Dinner, and the only stop worth booking ahead.",
+        "The anchor. Everything before this was warm-up.",
+    ],
+}
+
+# Minutes and share of budget per slot. Dinner gets the money and the time;
+# everything else is there to make dinner better.
+SHAPE = {
+    "drinks":    (50, 0.16),
+    "coffee":    (40, 0.08),
+    "aquarium":  (75, 0.22),
+    "activity":  (70, 0.18),
+    "show":      (110, 0.30),
+    "music":     (70, 0.20),
+    "viewpoint": (40, 0.00),
+    "shopping":  (35, 0.05),
+    "food":      (95, 0.50),
+}
+
+# Which Stop.kind each slot maps to - the kind drives the booking partner and
+# the verification rules, so it has to be one of models.STOP_KINDS.
+AS_KIND = {"aquarium": "activity", "coffee": "coffee", "drinks": "drinks",
+           "activity": "activity", "music": "music", "show": "show",
+           "viewpoint": "viewpoint", "shopping": "shopping", "food": "food"}
+
+
+def _respect_hours(stops: list[Stop]) -> None:
+    """Put whatever closes first, first. Mutates.
+
+    Museums and aquariums shut at six while bars and restaurants run late, so
+    the obvious arc - drink, attraction, dinner - marches you to the aquarium
+    exactly as the doors close. The first Boston plan this produced did
+    precisely that: New England Aquarium, 18:02 to 19:17, closing time 18:00.
+
+    The hours are already in hand from the lookup, so use them. Dinner stays
+    last whatever it says, because nobody wants an evening reordered into
+    eating at six and a museum at nine.
+    """
+    if len(stops) < 2:
+        return
+
+    def shuts(s: Stop) -> int:
+        # No published closing time means no constraint: sorts last, and keeps
+        # its order relative to the other unconstrained stops.
+        return osm.closes_at(s.opening_hours) or 24 * 60
+
+    if all(shuts(s) == 24 * 60 for s in stops):
+        return
+
+    tail = [s for s in stops if s.kind == "food"]
+    head = [s for s in stops if s.kind != "food"]
+    head.sort(key=shuts)
+
+    reordered = head + tail
+    if [s.name for s in reordered] != [s.name for s in stops]:
+        log.info("planner: reordered around closing times -> %s",
+                 ", ".join(s.name for s in reordered))
+        # Keep the evening's own start time. `_restart` re-flows from
+        # `stops[0].start`, so without this the new first stop inherits
+        # whatever slot it used to occupy - which put the aquarium at 17:32
+        # instead of 16:30 and left it overrunning the closing time anyway.
+        opening = stops[0].start
+        stops[:] = reordered
+        stops[0].start = opening
+        for s in stops[:-1]:
+            s.travel_minutes = s.travel_minutes or 12
+            s.travel_next = s.travel_next or "A few minutes on foot."
+        stops[-1].travel_next = ""
+        stops[-1].travel_minutes = 0
+        _restart(stops)
+
+
+def _offline_plan(prefs: Prefs, w: Weather) -> Plan:
+    """Build an evening out of real, named places near the user - with no API
+    key of any kind.
+
+    This used to emit templates: "a specialist coffee bar or natural wine bar
+    in a walkable part of town". True, useless, and it read like a computer,
+    because it was one talking about a place it had never heard of. Now it
+    asks OpenStreetMap what is actually around the coordinates and builds the
+    night out of that, which for Boston means drinks at a real bar, the New
+    England Aquarium, and dinner at a real restaurant.
+
+    It still falls back to the old shape when there is nothing nearby or no
+    coordinates - an honest placeholder beats an invented venue.
+    """
+    sr = rules.stage_rules(prefs.relationship_stage)
+    slots = _slots_for(prefs, w)
     gh = wx.golden_hour(w)
+
     start_m = (prefs.start_time.hour * 60 + prefs.start_time.minute) if prefs.start_time else 17 * 60
-    if gh and not wet:
-        # Put the walk *inside* the light rather than leading up to it: start a
-        # quarter hour before golden hour so the leg lands on sunset.
-        start_m = max(start_m, gh[0].hour * 60 + gh[0].minute - 15)
+    if "viewpoint" in slots and gh and not w.is_wet:
+        # Put the outdoor stop in the light rather than after it.
+        light = gh[0].hour * 60 + gh[0].minute - (len(slots) - slots.index("viewpoint") - 1) * 70
+        start_m = max(start_m, min(start_m + 90, light))
 
     stops: list[Stop] = []
+    used: set[str] = set()
     t = start_m
+    budget_left = prefs.budget
 
-    if wet:
-        stops.append(Stop(
-            name=f"A covered market or arcade in central {prefs.location}",
-            kind="shopping", start=_hhmm(t), minutes=legs["opener"],
-            cost=round(prefs.budget * split["opener"] * 0.4, 2),
-            why="Rain is likely, so the opener is under cover but still has things to react to.",
-            travel_next="Short walk to the coffee stop.", travel_minutes=10,
-            dress_code="casual", indoor=True,
-            fallback="Any bookshop or record shop on the same street.",
-            tip="Arrive before the stalls start packing up - most wind down early.",
-        ))
-    else:
-        stops.append(Stop(
-            name=f"Sunset walk along the best-known waterfront or park edge in {prefs.location}",
-            kind="viewpoint", start=_hhmm(t), minutes=legs["opener"], cost=0.0,
-            why="Free, outdoors, and gives you something to look at while the conversation warms up.",
-            travel_next="Walk on to the coffee or drinks stop.", travel_minutes=10,
-            dress_code="casual", indoor=False,
-            fallback="The nearest museum lobby or covered arcade if it turns.",
-            tip=(f"Aim to be in position by {gh[0].strftime('%H:%M')} for the light."
-                 if gh else "Aim to arrive about an hour before sunset."),
-        ))
-    t += stops[-1].minutes + stops[-1].travel_minutes
+    for i, slot in enumerate(slots):
+        minutes, share = SHAPE.get(slot, (60, 0.2))
+        cost = round(min(budget_left, prefs.budget * share), 2)
+        hits = osm.nearby(slot, prefs.lat, prefs.lon, prefs.transportation, limit=6)
+        venue = _pick(hits, used)
+        last = i == len(slots) - 1
 
-    stops.append(Stop(
-        name=f"A specialist coffee bar or natural wine bar{near}",
-        kind="drinks" if prefs.relationship_stage != "first_date" else "coffee",
-        start=_hhmm(t), minutes=legs["second"],
-        cost=round(prefs.budget * split["opener"], 2),
-        why=(f"Somewhere to sit down while it is still early, chosen near {interest} so the walk there is not wasted."
-             if interest else
-             "Somewhere to sit down while it is still early, close enough to dinner to walk it."),
-        travel_next="Walk to dinner.", travel_minutes=12,
-        booking="Walk-in. If there is a queue, put your name down and wait outside.",
-        dress_code="casual", indoor=True,
-        fallback="", tip="Sit at the bar rather than a table - easier to talk, easier to leave.",
-    ))
-    t += stops[-1].minutes + stops[-1].travel_minutes
+        if venue is None:
+            # Nothing real nearby for this slot. Say what to look for instead
+            # of inventing a name.
+            stops.append(_placeholder(slot, prefs, t, minutes, cost, last))
+        else:
+            used.add(venue.name.lower())
+            stops.append(_real_stop(slot, venue, prefs, w, t, minutes, cost, last))
 
-    stops.append(Stop(
-        name=f"Dinner at a mid-sized neighbourhood restaurant in {prefs.location}",
-        kind="food", start=_hhmm(t), minutes=legs["main"],
-        cost=round(prefs.budget * split["main"], 2),
-        why="The anchor of the evening, and the only stop worth booking in advance.",
-        travel_next="" if prefs.relationship_stage == "first_date" else "Walk to the last stop.",
-        travel_minutes=0 if prefs.relationship_stage == "first_date" else 12,
-        booking=f"Book about a week ahead for {prefs.on.strftime('%A') if prefs.on else 'Saturday'} night.",
-        dress_code=prefs.clothing_style if prefs.clothing_style in ("smart_casual", "dressy", "formal") else "casual",
-        indoor=True, fallback="",
-        tip=f"Ask for the {'earlier' if prefs.relationship_stage == 'first_date' else 'later'} sitting - "
-            f"{'you keep the option to end cleanly' if prefs.relationship_stage == 'first_date' else 'the room fills up and gets better'}.",
-    ))
-    t += stops[-1].minutes + stops[-1].travel_minutes
+        budget_left = max(0.0, budget_left - cost)
+        t += minutes + (0 if last else 12)
 
-    # First dates end after dinner. Anything else gets a third act.
-    if prefs.relationship_stage != "first_date" and len(stops) < sr["max_stops"]:
-        stops.append(Stop(
-            name=f"A late bar with live music in {prefs.location}",
-            kind="music", start=_hhmm(t), minutes=70,
-            cost=round(prefs.budget * split["closer"], 2),
-            why="Optional by design - suggest it only if the evening is still going.",
-            travel_next="", travel_minutes=0,
-            booking="Check whether there is a cover charge or a set time.",
-            dress_code="casual", indoor=True, fallback="",
-            tip="Check the last train before you order the second round.",
-        ))
-
+    _respect_hours(stops)
     _fit_window(stops, min(sr["max_hours"], prefs.hours))
 
+    # A photograph for whichever stop has one. `places.enrich` does this for
+    # model plans but skips offline ones entirely, so it happens here - and
+    # only after the trim, so nothing is fetched for a stop that got cut.
+    for s in stops:
+        if s.verified and s.kind in places.PHOTO_KINDS:
+            shot = wiki.look(s.name, prefs.location, s.lat, s.lon)
+            if shot:
+                s.photo, s.blurb, s.photo_credit = shot.photo, shot.blurb, shot.url
+
     total = sum(s.cost for s in stops)
+    named = [s.name for s in stops if s.verified or s.address]
+    headline = named[1] if len(named) > 1 else (named[0] if named else prefs.location)
+
     return Plan(
-        title=f"An evening in {prefs.location}",
-        pitch=(f"{'Out of the rain' if wet else 'Sunset'}, somewhere to sit, dinner"
-               f"{', and music after' if len(stops) > 3 else ''} - "
-               f"about {prefs.currency} {total:.0f} for two."),
+        title=_title(prefs, slots, stops),
+        pitch=_pitch(prefs, stops, total),
         stops=stops,
         total_cost=round(total, 2),
-        transport_note=(
-            f"Planned for {prefs.transportation}: every hop is kept under "
-            f"{prefs.hop_limit} minutes, so pick the stops within one neighbourhood."
-            + (" Check parking before you commit to the dinner stop." if prefs.transportation == "car" else "")
-        ),
-        weather_call=(
-            f"Forecast is {w.brief()}. "
-            + ("Rain moved the opener indoors; re-check the morning of and swap back if it clears."
-               if wet else
-               "The opener is outdoors - re-check the forecast that morning and use the fallback if it turns.")
-        ),
-        wear=(
-            f"{prefs.clothing_style.replace('_', ' ').title()}, with shoes you can walk "
-            f"{'twenty minutes' if prefs.transportation in ('walking', 'transit') else 'a few blocks'} in"
-            + (", and a jacket that handles rain." if wet else
-               ", and a layer for when the sun goes down." if w.is_cold else ".")
-        ),
-        backup="Dinner is the load-bearing stop. If it falls through, move the booking earlier "
-               "and stretch the drinks stop rather than hunting for a replacement on the night.",
+        transport_note=_transport_note(prefs, stops),
+        weather_call=_weather_note(w, stops),
+        wear=_wear(prefs, w),
+        backup=f"{headline} is the one to check before you leave - opening hours move, and "
+               f"everything else on this list is walkable enough to swap at short notice.",
         generated_by="offline",
     )
+
+
+def _real_stop(slot: str, v, prefs: Prefs, w: Weather, t: int,
+               minutes: int, cost: float, last: bool) -> Stop:
+    """One stop, built from a place that actually exists."""
+    kind = AS_KIND.get(slot, "activity")
+    why = BLURB.get(slot, BLURB["activity"])[hash(v.name) % 2]
+
+    # Say something true and specific about *this* place. Only the cuisine -
+    # the kind already has its own badge on the card, and repeating it in the
+    # prose reads like a database dump: "...tank of fish. (aquarium)".
+    if v.cuisine:
+        why = f"{why} Expect {v.cuisine.split(',')[0].strip()}."
+
+    outdoors = kind in ("viewpoint", "walk")
+    return Stop(
+        name=v.name,
+        kind=kind,
+        start=_hhmm(t),
+        minutes=minutes,
+        cost=cost,
+        why=why,
+        travel_next="" if last else "A few minutes on foot.",
+        travel_minutes=0 if last else 12,
+        booking=("Worth booking - it is the busiest stop of the night."
+                 if kind == "food" else
+                 "Check the hours before you set off." if v.opening_hours else ""),
+        dress_code=prefs.clothing_style if kind == "food" else "casual",
+        indoor=not outdoors,
+        fallback="" if not outdoors else "Anywhere with a roof on the same street.",
+        tip=(f"Open {v.opening_hours}." if v.opening_hours else
+             f"About {v.walk_time_from(prefs.lat, prefs.lon)} from where you started."
+             if hasattr(v, "walk_time_from") else ""),
+        # Pre-filled from the lookup, so `places.enrich` has nothing to do and
+        # the stop is verified before the rules ever see it.
+        looked_up=True, verified=True, source="osm",
+        lat=v.lat, lon=v.lon, address=v.address, venue_kind=v.kind,
+        cuisine=v.cuisine, opening_hours=v.opening_hours, website=v.website,
+        distance_m=int(round(geo.distance_km(v.lat, v.lon, prefs.lat, prefs.lon) * 1000))
+        if prefs.lat is not None else 0,
+    )
+
+
+def _placeholder(slot: str, prefs: Prefs, t: int, minutes: int,
+                 cost: float, last: bool) -> Stop:
+    """Nothing real found for this slot - describe what to look for."""
+    what = {"drinks": "a bar", "coffee": "a coffee place", "food": "somewhere to eat",
+            "music": "somewhere with live music", "show": "a cinema or theatre",
+            "activity": "a museum or gallery", "aquarium": "an aquarium",
+            "viewpoint": "high ground or a park", "shopping": "a market"}.get(slot, "somewhere")
+    kind = AS_KIND.get(slot, "activity")
+    outdoors = kind in ("viewpoint", "walk")
+    return Stop(
+        name=f"{what.capitalize()} near {prefs.location.split(',')[0]}",
+        kind=kind, start=_hhmm(t), minutes=minutes, cost=cost,
+        why=f"Nothing matching {what} came back on the map for this spot - "
+            f"worth a look on the way, but do not build the night around it.",
+        travel_next="" if last else "Short walk.", travel_minutes=0 if last else 12,
+        dress_code="casual", indoor=not outdoors,
+        fallback="" if not outdoors else "Anywhere indoors nearby.",
+        tip="", booking="",
+    )
+
+
+def _title(prefs: Prefs, slots: list[str], stops: list[Stop]) -> str:
+    where = prefs.location.split(",")[0]
+    anchor = next((s for s in stops if s.kind in ("activity", "music", "show")), None)
+    if anchor and anchor.verified:
+        return f"{anchor.name}, and either side of it"
+    return f"An evening around {where}"
+
+
+def _pitch(prefs: Prefs, stops: list[Stop], total: float) -> str:
+    names = [s.name for s in stops if s.verified]
+    if len(names) >= 2:
+        return (f"{names[0]}, then {names[1]}"
+                + (f", then {names[2]}" if len(names) > 2 else "")
+                + f" - about {prefs.currency} {total:.0f} for two.")
+    return (f"A night around {prefs.location.split(',')[0]} for about "
+            f"{prefs.currency} {total:.0f}, for two.")
+
+
+def _transport_note(prefs: Prefs, stops: list[Stop]) -> str:
+    far = max((s.distance_m for s in stops), default=0)
+    how = {"walking": "All on foot", "bike": "All bikeable", "transit": "All on one or two lines",
+           "car": "Driveable, but park once and walk", "rideshare": "Two short rides at most"}
+    lead = how.get(prefs.transportation, "All close together")
+    if far:
+        return f"{lead} - the furthest stop is about {far / 1000:.1f} km from where you started."
+    return f"{lead}."
+
+
+def _weather_note(w: Weather, stops: list[Stop]) -> str:
+    outdoor = [s.name for s in stops if not s.indoor]
+    if not outdoor:
+        return f"Forecast is {w.brief()}. Everything here is indoors, so the sky is not your problem."
+    return (f"Forecast is {w.brief()}. {outdoor[0]} is the outdoor stop - "
+            f"check again the morning of and move it inside if it turns.")
+
+
+def _wear(prefs: Prefs, w: Weather) -> str:
+    base = prefs.clothing_style.replace("_", " ")
+    shoes = ("shoes you can walk twenty minutes in"
+             if prefs.transportation in ("walking", "transit") else "something comfortable")
+    weather = (" and a jacket that can get rained on" if w.is_wet else
+               " and a layer for when the sun goes" if w.is_cold else "")
+    return f"{base.capitalize()}, with {shoes}{weather}."

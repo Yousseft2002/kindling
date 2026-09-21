@@ -22,8 +22,8 @@
 <style>
   :root{
     --bg:#fdf6f0; --bg2:#f7e8dc; --card:#fffdfb; --ink:#241a14; --muted:#6f5d52;
-    --faint:#a3907f; --line:#eddfd2; --accent:#c2643c; --accent-soft:#f6ddcd;
-    --glow1:#f7cdb0; --glow2:#f3d9c6; --glow3:#e9d5e4;
+    --faint:#a3907f; --line:#ecdccf; --accent:#d1481f; --accent-soft:#fbdccb;
+    --glow1:#ffc79a; --glow2:#ffd9c0; --glow3:#e6cdf0;
     --warn-bg:#fff4e6; --warn-line:#f2d9b8; --warn-ink:#8a5720;
     --ok-ink:#4a7550;
     --safe-t:env(safe-area-inset-top,0px); --safe-b:env(safe-area-inset-bottom,0px);
@@ -34,7 +34,7 @@
   @media (prefers-color-scheme:dark){
     :root{
       --bg:#14100d; --bg2:#1d1712; --card:#221b16; --ink:#f7ece4; --muted:#bfa896;
-      --faint:#8d7566; --line:#362b23; --accent:#e79466; --accent-soft:#3a271c;
+      --faint:#8d7566; --line:#3a2d24; --accent:#ff9a63; --accent-soft:#40281c;
       --glow1:#4a2f1e; --glow2:#3a2a1f; --glow3:#332536;
       --warn-bg:#2d2015; --warn-line:#4d3520; --warn-ink:#e8b98a;
       --ok-ink:#93c79c;
@@ -262,6 +262,19 @@
   .arc b{color:var(--ink);font-weight:600}
   .card{background:var(--card);border:1.5px solid var(--line);border-radius:20px;padding:22px}
   .stop{margin-bottom:14px;animation:rise .5s var(--ease) backwards}
+  /* A photograph of the place beats any amount of adjective, and it is the
+     single biggest thing separating this from a list of names. */
+  .shot{margin:-22px -22px 14px;height:180px;overflow:hidden;border-radius:19px 19px 0 0;
+        background:var(--accent-soft);position:relative}
+  .shot img{width:100%;height:100%;object-fit:cover;display:block}
+  .shot .src{position:absolute;right:6px;bottom:4px;font-size:10.5px;
+             background:rgba(0,0,0,.55);color:#fff;padding:2px 7px;border-radius:7px;
+             text-decoration:none}
+  .blurb{margin-top:11px;font-size:14.5px;line-height:1.5;color:var(--muted);
+         padding-left:13px;border-left:2.5px solid var(--accent-soft)}
+  .kind{display:inline-block;margin-bottom:8px;padding:4px 11px;border-radius:99px;
+        background:var(--accent-soft);color:var(--accent);font-size:11.5px;
+        font-weight:700;letter-spacing:.08em;text-transform:uppercase}
   @keyframes rise{from{opacity:0;transform:translateY(18px)}}
   .stop .meta{font-size:12.5px;letter-spacing:.1em;text-transform:uppercase;
               color:var(--accent);font-weight:600;margin-bottom:7px}
@@ -957,8 +970,11 @@ function routeMap(stops, height) {
     for (let ty = Math.floor(top / TILE); ty <= Math.floor((top + H) / TILE); ty++) {
       if (ty < 0 || ty >= span) continue;             // above the pole
       const wrapped = ((tx % span) + span) % span;    // across the date line
+      // No loading="lazy" here. These tiles sit inside a short, clipped box,
+      // so the browser decides most of them are off-screen and never fetches
+      // them - leaving a map with two pins floating over empty cream.
       tiles += `<img src="https://tile.openstreetmap.org/${z}/${wrapped}/${ty}.png" `
-             + `alt="" loading="lazy" style="left:${tx * TILE - left}px;top:${ty * TILE - top}px">`;
+             + `alt="" style="left:${tx * TILE - left}px;top:${ty * TILE - top}px">`;
     }
   }
 
@@ -1000,7 +1016,7 @@ function show(d) {
     }
     // What kind of place it is, how far, and whether it will be open: the
     // three things you want before committing to walking there.
-    const facts = [s.venue_kind, s.cuisine, walkTime(s)].filter(Boolean);
+    const facts = [s.cuisine, walkTime(s)].filter(Boolean);
     const bits = [];
     if (facts.length) bits.push(`<div class="detail">${esc(facts.join(' · '))}</div>`);
     if (s.address) bits.push(`<div class="detail"><b>Address:</b> ${esc(s.address)}</div>`);
@@ -1014,11 +1030,22 @@ function show(d) {
     if (s.book_url) links.push(`<a class="btn" href="${esc(s.book_url)}" target="_blank" rel="noopener">Book</a>`);
     if (s.map_url)  links.push(`<a class="btn ghost" href="${esc(s.map_url)}" target="_blank" rel="noopener">`
                               + `${s.verified ? 'Open in Google Maps' : 'Map'}</a>`);
+    const shot = s.photo
+      ? `<div class="shot"><img src="${esc(s.photo)}" alt="" loading="lazy">`
+        + (s.photo_credit ? `<a class="src" href="${esc(s.photo_credit)}" target="_blank" rel="noopener">Wikipedia</a>` : '')
+        + `</div>`
+      : '';
+    const blurb = s.blurb ? `<div class="blurb">${esc(s.blurb)}</div>` : '';
+    const kind  = s.venue_kind ? `<span class="kind">${esc(s.venue_kind)}</span>` : '';
+
     return `<div class="card stop" style="animation-delay:${i * 90}ms">
+        ${shot}
         <div class="meta">${i+1} &middot; ${esc(s.start)} &middot; ${s.minutes} min &middot; ${money(s.cost)}</div>
+        ${kind}
         <h3>${esc(s.name)}</h3>
         ${badge}
         <p class="why">${esc(s.why)}</p>
+        ${blurb}
         ${bits.join('')}
         <div class="links">${links.join('')}</div>
       </div>` + (s.travel_next ? `<div class="travel">&darr;&nbsp; ${esc(s.travel_next)}</div>` : '');

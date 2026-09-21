@@ -257,6 +257,13 @@ class Stop(BaseModel):
     website: str = ""
     source: str = ""           # "osm" | "google"
 
+    # From Wikipedia, for the stops notable enough to have an article. A
+    # photograph of the place you are walking to does more for an itinerary
+    # than any amount of adjective.
+    photo: str = ""
+    blurb: str = ""
+    photo_credit: str = ""     # the article, which the licence requires crediting
+
     # Google only; OpenStreetMap has no review system.
     rating: float | None = None
     ratings_count: int = 0
