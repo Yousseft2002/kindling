@@ -78,12 +78,26 @@
      `body.done` relaxes it again. */
   .wrap{position:relative;z-index:1;max-width:680px;margin:0 auto;
         padding:calc(16px + var(--safe-t)) 20px calc(24px + var(--safe-b));
-        height:100vh;height:100svh;display:flex;flex-direction:column}
+        height:100vh;height:100svh;height:var(--vh,100svh);
+        display:flex;flex-direction:column}
   body.done .wrap{height:auto;min-height:100vh;min-height:100svh}
   /* The form wraps the deck, so it has to carry the growth itself - otherwise
      flex:1 on .deck has nothing to grow inside and the button floats
      mid-page instead of sitting at the bottom. */
-  #f{flex:1;display:flex;flex-direction:column;min-height:0}
+  #f{flex:1;display:flex;flex-direction:column;min-height:0;position:relative}
+  /* A screen taller than the phone - five option cards, say - scrolls inside
+     the deck, and nothing said so: the fifth option simply did not exist as
+     far as the user knew. This fades the cut-off edge and points down. */
+  #f::after{content:'';position:absolute;left:0;right:0;bottom:0;height:56px;
+            background:linear-gradient(to bottom,transparent,var(--bg));
+            pointer-events:none;opacity:0;transition:opacity .25s var(--ease)}
+  #f.more::after{opacity:1}
+  .more-hint{position:absolute;left:50%;bottom:6px;transform:translateX(-50%);
+             font-size:12.5px;letter-spacing:.06em;text-transform:uppercase;
+             color:var(--accent);font-weight:600;pointer-events:none;
+             opacity:0;transition:opacity .25s var(--ease)}
+  #f.more .more-hint{opacity:1;animation:nudge 1.8s ease-in-out infinite}
+  @keyframes nudge{0%,100%{transform:translate(-50%,0)}50%{transform:translate(-50%,4px)}}
   /* `margin:auto` on the stage rather than `align-items:center`: centring a
      flex child that is taller than its container clips the top off in every
      browser, and the long option lists are taller than a phone. */
@@ -105,6 +119,15 @@
           border:1px solid var(--warn-line);background:var(--warn-bg);color:var(--warn-ink);
           display:none;align-items:center;gap:12px;justify-content:space-between;line-height:1.45}
   .banner.on{display:flex}
+  /* This is a message for whoever is running the server, and it was taking
+     13% of a phone screen above every single question. Clamp it, and let a
+     tap open it. */
+  .banner span{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;
+               overflow:hidden;cursor:pointer}
+  .banner.open span{-webkit-line-clamp:unset;overflow:visible}
+  .banner .x{flex:none;border:0;background:transparent;color:inherit;font-size:20px;
+             line-height:1;padding:2px 4px;cursor:pointer;opacity:.6}
+  .banner .x:hover{opacity:1}
   .banner button{border:0;background:var(--ink);color:var(--bg);border-radius:99px;
     padding:9px 16px;font:inherit;font-size:13.5px;font-weight:600;cursor:pointer;flex:none}
 
@@ -295,6 +318,26 @@
   .foot{margin:22px 0 0;font-size:13.5px;color:var(--faint);line-height:1.6}
   .err{border-color:var(--warn-line);background:var(--warn-bg);color:var(--warn-ink);font-size:17px}
 
+  /* Short viewports - which is every phone. At the default sizes only two of
+     the five option cards fitted on screen, so the question read as if it had
+     two answers. Trim the header and the cards until four fit. */
+  @media (max-height:860px){
+    h1{font-size:clamp(26px,6.4vw,34px);margin-bottom:8px}
+    .say{font-size:15.5px;margin-bottom:18px}
+    .eyebrow{margin-bottom:10px;font-size:11.5px}
+    .top{padding:2px 0 12px}
+    .opt{padding:12px 16px;border-radius:15px}
+    .opt b{font-size:17.5px;margin-bottom:1px}
+    .opt span{font-size:13.5px;line-height:1.35}
+    .opts{gap:8px}
+    .banner{padding:10px 14px;font-size:13.5px;margin-bottom:10px}
+    .nav{padding-top:14px}
+    .go{padding:15px 26px;font-size:17px}
+    .back{width:50px;height:50px}
+    input,textarea,select{padding:13px 16px}
+    .field{margin-bottom:14px}
+  }
+
   /* Motion is decoration here, never information: every screen is still
      reachable and readable with all of it switched off. */
   @media (prefers-reduced-motion:reduce){
@@ -321,9 +364,10 @@
     <span>Add this to your home screen.</span>
     <button id="install_go" type="button">Install</button>
   </div>
-  <div class="banner" id="stale"><span id="stale_text"></span></div>
+  <div class="banner" id="stale"><span id="stale_text"></span><button class="x" id="stale_x" type="button" aria-label="Dismiss">&times;</button></div>
 
   <form id="f" autocomplete="off">
+  <div class="more-hint">more ↓</div>
   <div class="deck" id="deck">
   <div class="stage" id="stage">
 
@@ -489,8 +533,12 @@ function reachError(err) {
 
 function setStale(msg) {
   $('#stale_text').textContent = msg;
+  $('#stale').classList.remove('open');
   $('#stale').classList.add('on');
 }
+
+$('#stale_text').addEventListener('click', () => $('#stale').classList.toggle('open'));
+$('#stale_x').addEventListener('click', () => $('#stale').classList.remove('on'));
 
 /* ---- service worker ------------------------------------------------ */
 if ('serviceWorker' in navigator) {
@@ -517,6 +565,27 @@ $('#install_go').addEventListener('click', async () => {
 });
 window.addEventListener('appinstalled', () => $('#install').classList.remove('on'));
 
+/* ---- the phone keyboard ---------------------------------------------
+   `svh` is the viewport with the browser chrome expanded; it does not
+   shrink when the software keyboard opens. So on a real phone the layout
+   stayed 812px tall while only ~450px was visible, and the button at the
+   bottom sat behind the keyboard on every screen with a text field.
+
+   The visual viewport does shrink, so drive the height from that. With no
+   keyboard the two are the same, which is why this is safe everywhere. */
+if (window.visualViewport) {
+  const vv = window.visualViewport;
+  const fit = () => document.documentElement.style.setProperty('--vh', vv.height + 'px');
+  vv.addEventListener('resize', fit);
+  fit();
+
+  // Keep whatever is focused above the keyboard, not under it.
+  document.addEventListener('focusin', e => {
+    if (!e.target.matches('input,textarea')) return;
+    setTimeout(() => e.target.scrollIntoView({block: 'center', behavior: 'smooth'}), 250);
+  });
+}
+
 /* ====================================================================
    The deck: one question per screen.
    ==================================================================== */
@@ -525,12 +594,23 @@ const stage = $('#stage');
 const deck = $('#deck');
 let step = 0;
 
+function affordance() {
+  // Show the fade only while there is something below the fold to reach -
+  // and never once the deck is gone, or it floats over the results page.
+  const d = deck, f = $('#f');
+  if (!d || !f) return;
+  const more = !d.hidden && d.scrollHeight - d.clientHeight - d.scrollTop > 24;
+  f.classList.toggle('more', more);
+}
+
 function measure() {
   // The stage animates to the height of the active screen, so the nav
   // buttons glide rather than jump. Recomputed whenever content changes
   // (the autocomplete opening, option cards arriving).
   const el = screens[step];
   if (el) stage.style.height = el.scrollHeight + 'px';
+  // After the height transition the deck knows whether it overflows.
+  setTimeout(affordance, 520);
 }
 
 function go(next, back = false) {
@@ -543,15 +623,23 @@ function go(next, back = false) {
   step = next;
   const el = screens[step];
   el.classList.remove('back');
-  // One frame, so the browser applies the start state before animating.
-  requestAnimationFrame(() => {
-    el.classList.add('active');
-    measure();
-    chrome();
-    const focus = el.dataset.focus && document.getElementById(el.dataset.focus);
-    if (focus && !REDUCED) setTimeout(() => focus.focus({preventScroll: true}), 320);
-    else if (focus) focus.focus({preventScroll: true});
-  });
+
+  // Flush the start state synchronously rather than waiting a frame.
+  //
+  // This used to run inside requestAnimationFrame, which is throttled - and
+  // on a page that is not being painted, deferred indefinitely. Switch apps
+  // mid-form on a phone and the queued callbacks all fire at once on return,
+  // re-adding `active` to screens that had already left: every question
+  // stacked on top of every other. Reading offsetWidth forces the same style
+  // flush, with no race and no dependency on the page being visible.
+  void el.offsetWidth;
+
+  el.classList.add('active');
+  measure();
+  chrome();
+  const focus = el.dataset.focus && document.getElementById(el.dataset.focus);
+  if (focus && !REDUCED) setTimeout(() => focus.focus({preventScroll: true}), 320);
+  else if (focus) focus.focus({preventScroll: true});
 }
 
 function chrome() {
@@ -591,6 +679,7 @@ $('#f').addEventListener('keydown', e => {
 $('#f').addEventListener('submit', e => { e.preventDefault(); advance(); });
 $('#f').addEventListener('input', validate);
 addEventListener('resize', measure);
+deck.addEventListener('scroll', affordance, {passive: true});
 
 /* ---- option cards, built from the server's vocabularies ------------- */
 if (SERVED)
@@ -820,6 +909,7 @@ async function submit() {
                         + `<button class="go" type="button" onclick="location.reload()" `
                         + `style="margin-top:18px">Start over</button>`;
     deck.hidden = true;
+    affordance();
     $('#nav').style.display = 'none';
     document.body.classList.add('done');
   } finally {
@@ -975,6 +1065,7 @@ function show(d) {
     <button class="go" type="button" id="again" style="margin-top:20px">Plan another</button>`;
 
   deck.hidden = true;
+  affordance();
   $('#nav').style.display = 'none';
   document.body.classList.add('done');
   $('#out').classList.add('on');
@@ -985,6 +1076,7 @@ function show(d) {
     deck.hidden = false;
     $('#nav').style.display = '';
     document.body.classList.remove('done');
+    affordance();
     $('#stale').classList.remove('on');
     go(1);
   };

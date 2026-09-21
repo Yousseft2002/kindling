@@ -1422,6 +1422,33 @@ def test_app_shell() -> None:
           "Not the running app" in index)
     check("the page warns up front when the server has no API key",
           "has_key" in index)
+
+    # --- phone-shaped problems, each found by actually looking at it -----
+
+    # `svh` does not shrink for the software keyboard, so the button sat
+    # behind it on every screen with a text field.
+    check("the layout follows the visual viewport, not just svh",
+          "visualViewport" in index and "--vh" in index)
+    check("a focused field is scrolled clear of the keyboard",
+          "scrollIntoView" in index and "focusin" in index)
+
+    # A screen taller than the phone scrolled with no sign that it did, so
+    # the fifth option did not exist as far as the user knew.
+    check("an overflowing screen shows it can be scrolled",
+          "#f.more::after" in index and "more-hint" in index)
+    check("the scroll hint is cleared when the deck is gone",
+          "!d.hidden &&" in index)
+
+    # requestAnimationFrame is deferred indefinitely on a page that is not
+    # being painted - switch apps mid-form and every queued callback fired
+    # at once, stacking every question on top of every other.
+    check("screen transitions do not depend on requestAnimationFrame",
+          "requestAnimationFrame(" not in index)   # the call, not the comment
+    check("the transition start state is flushed synchronously",
+          "void el.offsetWidth" in index)
+
+    # Only two of five option cards fitted on a phone.
+    check("short viewports get a compact layout", "@media (max-height:860px)" in index)
     check("the no-key warning points at the diagnostic", "--check-key" in index)
 
     # The secret must never be serialisable out of the process.
