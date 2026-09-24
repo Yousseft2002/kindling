@@ -1,43 +1,210 @@
-# Date planner
+# Kindling
 
-Seven inputs in, one evening out — with real venues, a map of the route, and
-a check that the places actually exist. No API key needed for any of that.
+Seven questions, one evening.
 
 ```
-sunset walk  →  photography spot  →  tasting menu  →  jazz bar
+drinks at JJ Foley's  →  New England Aquarium  →  dinner at Kaze
 ```
 
-Not a list of recommendations — a route, with start times, costs per stop, what
-to book and when it gets released, what to wear, and what to do if it rains.
+Not a list of recommendations — a route, with start times, a cost per stop,
+what to book, what to wear, and a named indoor fallback for anything outdoors.
+Every stop is a real place near you, with its address, its opening hours, its
+website, and a pin on a map.
+
+**No API key. No account. No server.** The app in `docs/` is the whole product
+and it runs entirely in your browser, on free public data.
+
+---
+
+## Run it
+
+It is a static site, so anything that serves files will do — but ES modules
+will not load from `file://`, so you do need a server of some kind:
 
 ```bash
-python run.py --location "Lisbon" --budget 140 --currency EUR \
-              --interests "jazz,photography" --stage dating
-python run.py --serve          # the app, on http://127.0.0.1:8765
-python run.py --serve --lan    # same, reachable from your phone
+python -m http.server 8090
+```
+
+Then open `http://127.0.0.1:8090/docs/`.
+
+Published, it is GitHub Pages pointed at the `docs/` folder on `main`. Nothing
+to build, nothing to deploy — pushing is deploying.
+
+## Where the data comes from
+
+| Service | For | Key |
+|---|---|---|
+| **OpenStreetMap** (Nominatim) | venues, categories, addresses, opening hours | none |
+| **Open-Meteo** | geocoding, forecast, sunset | none |
+| **Wikipedia** | a photograph and a line of context | none |
+| **OpenStreetMap tiles** | the route map | none |
+
+All four answer cross-origin browser calls, which is the only reason this can
+be a static site at all — that was checked from a third-party origin before
+committing to the approach, not assumed.
+
+Nominatim asks for at most one request a second and a plan needs several
+lookups, so **a plan takes about ten seconds**. `lib/net.js` is the single gate
+that enforces the rate limit, and the button reports the stage it is on —
+*Looking for places near you → Finding a photograph → Checking the weather* —
+rather than spinning silently. Results are memoised for the session, so going
+back and changing one answer does not re-fetch everything.
+
+## What the seven answers actually change
+
+Asking seven questions and ignoring the answers is theatre, so:
+
+| Input | What it changes |
+|---|---|
+| **location** | Resolved to coordinates. Everything is searched within a radius of *that point* — a plan anchored on a point is local, one anchored on the string "London" is a guess about which part. |
+| **relationship stage** | The biggest lever: how many stops, how long the evening runs, and whether the last one is optional. |
+| **interests** | Picks the anchor stop. "aquarium" builds the evening around an aquarium, "jazz" around live music, "art" around a gallery. |
+| **budget** | A hard cap, split across stops, then re-checked against the arithmetic. |
+| **weather** | Fetched for those coordinates, or typed. Rain keeps the evening indoors instead of marching you up a hill. |
+| **transportation** | Sets the search radius and the longest acceptable hop between stops. |
+| **clothing style** | Flags a venue whose door policy is stricter than what you are wearing. A plan that gets you turned away is a failed plan. |
+
+Plus what a time-ordered itinerary cannot do without: the date, the start time,
+roughly how long, and a free-text note for dietary limits or anything to avoid.
+
+### Location, specifically
+
+Two ways in, both ending at coordinates:
+
+- **Type it.** The field autocompletes against Open-Meteo's geocoder; picking a
+  result attaches its coordinates. This is how you tell Alfama in Lisbon from
+  Alfamén in Aragon, which the picker will happily offer you both of.
+- **Tap the pin.** The browser hands over GPS coordinates and Nominatim turns
+  them into a neighbourhood name — `38.7139, -9.1289` comes back as "Alfama,
+  Lisboa".
+
+Geolocation needs a *secure context*: `localhost` or HTTPS. GitHub Pages is
+HTTPS, so on the published site the pin works on a phone. Over a plain-HTTP LAN
+address it does not, and the app says so instead of failing silently.
+
+## Things that are load-bearing
+
+**Opening hours are a constraint, not a decoration.** The first Boston plan
+this ever produced put the aquarium at 18:02–19:17 against a closing time of
+18:00. Now whatever shuts first goes first, dinner stays last, and anything
+that still overruns is flagged rather than hidden. `closesAt()` takes the last
+clock time in an OSM `opening_hours` string, which is the closing time in every
+common shape; a result before noon means it shuts after midnight, which is
+treated as no limit.
+
+**Compound locations resolve broadest-part-first.** "Williamsburg, Brooklyn"
+matches nothing as a whole, and falling back to the specific part alone finds
+Williamsburg *Virginia* — a confident answer 500 km from the date. So the
+container is resolved first, and the specific part is only accepted within
+150 km of it.
+
+**Transit noise is filtered.** Searching "aquarium" in Boston returns the New
+England Aquarium and then four subway stops named after it.
+
+**A photograph is only believed when the article is about this place.**
+Verified against the article's own coordinates, which is language-independent
+and decisive. A name check alone passes "Chart House" against a chain on
+another continent; a city-name check wrongly rejects Museu do Aljube, whose
+English article says Lisbon while the user typed Lisboa. Appending the place
+name to the search query has the same failure — it returned the Faneuil Hall
+article for a restaurant *inside* Faneuil Hall. With coordinates in hand, don't.
+
+**Every path is relative.** A GitHub Pages project site lives at
+`you.github.io/kindling/`, so an absolute `/icons/…`, or a service worker
+caching `'/'`, points at the domain root and breaks. `sw.js` resolves
+everything against `new URL('./', self.location)`.
+
+**Map tiles cannot use `loading="lazy"`.** Inside a short clipped box the
+browser decides most of them are off-screen and never fetches them. And a
+cached tile finishes loading before any handler can attach, so `revealTiles()`
+checks `complete` as well as listening — otherwise the *second* plan you make
+has an invisible map.
+
+## The app itself
+
+One question per screen, ten of them, in the order a person actually thinks
+about an evening, rather than a form with fourteen fields. Picking a stage or a
+dress code both answers and advances, so most of the flow is one tap.
+
+- **The stage animates to the height of the active screen**, so the button
+  glides rather than jumps. `measure()` recomputes on every transition and
+  whenever content changes size.
+- **Motion carries direction.** Forward rises from below, back drops from
+  above, and the outgoing screen leaves the way you are travelling. Going back
+  skips the stagger — you have read the question already and you want to change
+  your answer.
+- **One clock.** Screens, their contents and the stage height all land inside
+  .34s. They used to take .42s, .74s and .5s, so the button arrived after the
+  sentence it belonged to.
+- **All motion is decoration, never information.** `prefers-reduced-motion`
+  collapses every transition and the auto-advance fires immediately. The
+  override must name every direction class: `.screen.enter-up` is a two-class
+  selector and out-specifies a bare `.screen{transform:none}`, so a rename
+  silently gives motion back to people who asked for none. A test pins this.
+- **Touch has no hover**, so everything interactive has an `:active` state.
+  Without one, a tap reads as lag even when nothing is slow.
+- **`.wrap` has a fixed height, not a minimum.** Flex children only shrink
+  inside a constrained container; with `min-height` the long option lists
+  pushed the button off the bottom. The results page is arbitrarily long, so
+  `body.done` relaxes it again.
+- **`margin:auto` centres the stage, not `align-items:center`** — centring a
+  flex child taller than its container clips the top off in every browser, and
+  five option cards are taller than a phone.
+- Display type is Fraunces from Google Fonts, with Georgia behind it. It
+  degrades cleanly if the request fails.
+
+Installable, and offline it opens to your last plan from `localStorage` — the
+actual failure case is standing outside a bar with one bar of signal trying to
+remember which street the next stop is on. It will not plan a *new* date
+without signal, and says so. The icons are generated, not hand-drawn:
+`python tools/make_icons.py`.
+
+## Layout
+
+```
+docs/                 the app — this is what GitHub Pages serves
+  index.html          shell, styles, the deck
+  app.js              screens, transitions, results, the map
+  lib/net.js          fetch, session cache, the Nominatim rate gate
+  lib/places.js       geocoding, category search, venue lookup, noise filter
+  lib/weather.js      forecast, golden hour, typed overrides
+  lib/wiki.js         photograph and blurb, with the coordinate guard
+  lib/plan.js         slots, composition, the rules
+  lib/links.js        booking and map links
+  sw.js               offline shell
 ```
 
 ---
 
-## Quickstart
+# The Python version
+
+`dateplanner/` and `run.py` are the original build, and they do everything
+`docs/` does **plus** the part that cannot ship to Pages: Claude writes the
+itinerary. A web-search scouting pass for what is actually on that night, a
+planning call, then a repair pass. That needs an API key, and a key in a public
+page is a key anyone can spend, so it needs a server.
 
 ```bash
 pip install -r requirements.txt
-python test_planner.py                           # 373 offline tests, no key, no spend
+python run.py --serve                            # the AI version, locally
 python run.py -l "Brooklyn" -b 90 --dry-run      # a real plan, zero API cost
-python run.py --serve                            # the app
+python test_planner.py                           # 407 offline tests, no key, no spend
 ```
+
+Two implementations of the same rules is a real cost, and worth saying out
+loud: `docs/` is the product, the Python side is where the AI path lives until
+it has somewhere to run. If they drift, `docs/` wins.
 
 ## The API key
 
-**Without a key every plan is a generic template** — "a specialist coffee bar in
-a walkable part of town" rather than a named venue. Everything else (location
-search, weather, timing, budget split, rules, booking links, the whole app)
-works either way, which is exactly what makes this confusing: the keyless
-output looks like a bad answer rather than like a missing credential.
+**Without a key every plan is a generic template** — "a specialist coffee bar
+in a walkable part of town" rather than a named venue. Everything else works
+either way, which is exactly what makes this confusing: the keyless output
+looks like a bad answer rather than a missing credential. (The static app
+solves this differently — it composes from real OSM venues, so there is no
+degraded mode to explain.)
 
-Two ways to set it. Get a key at
-[console.anthropic.com](https://console.anthropic.com/settings/keys).
+Get a key at [console.anthropic.com](https://console.anthropic.com/settings/keys).
 
 ```bash
 # 1. A .env file next to run.py — takes effect immediately
@@ -54,126 +221,16 @@ Then confirm it actually works:
 python run.py --check-key
 ```
 
-That makes one tiny request and tells you whether the key is missing, invalid,
-out of credit, or fine. It prints the key's length and its `sk-ant-` prefix so
-you can spot a truncated paste, and never the key itself.
+That makes one tiny request and says whether the key is missing, invalid, out
+of credit, or fine. It prints the key's length and its `sk-ant-` prefix so you
+can spot a truncated paste, and never the key itself.
 
-The app warns about this too: with no key on the server, the page shows a
-banner *before* you plan anything, rather than letting you read four generic
-stops and conclude the app is broken.
+`.env` is gitignored. A real environment variable always beats the file.
 
-`.env` is gitignored. A real environment variable always beats the file, so
-`ANTHROPIC_API_KEY=... python run.py` works as expected.
-
-## The app
-
-`python run.py --serve` is an installable web app, not just a page.
-
-It asks **one question per screen** — ten of them, in the order a person
-actually thinks about an evening — rather than presenting a form with fourteen
-fields. Each screen is a single large question, centred, with the button pinned
-under your thumb. Picking a relationship stage or a dress code both answers and
-advances, so most of the flow is one tap per screen.
-
-Notes on the build, since a few things are load-bearing:
-
-- **The stage animates to the height of the active screen**, so the button
-  glides rather than jumps. `measure()` recomputes on every transition and
-  whenever content changes size (the autocomplete opening, option cards
-  arriving).
-- **`.wrap` has a fixed height, not a minimum.** Flex children only shrink
-  inside a constrained container; with `min-height` the long option lists
-  pushed the button off the bottom instead of scrolling inside the deck. The
-  results page is arbitrarily long, so `body.done` relaxes it again.
-- **`margin:auto` centres the stage, not `align-items:center`** — centring a
-  flex child taller than its container clips the top off in every browser, and
-  five option cards are taller than a phone.
-- **Motion carries direction.** Forward rises from below, back drops from
-  above, and the outgoing screen leaves the way you are travelling. It used to
-  animate identically both ways, which made the movement decorative rather than
-  informative. Going back also skips the stagger — you have already read the
-  question and you want to change your answer.
-- **One clock.** Screens, their contents and the stage height all land inside
-  .34s. They used to take .42s, .74s and .5s respectively, so the button
-  arrived after the sentence it belonged to.
-- **All motion is decoration, never information.** `prefers-reduced-motion`
-  collapses every transition, and the auto-advance fires immediately instead of
-  after a beat. Every screen is reachable and readable with all of it off.
-  Note that the override must name every direction class: `.screen.enter-up` is
-  a two-class selector and out-specifies a bare `.screen{transform:none}`, so a
-  rename silently gives motion back to people who asked for none. A test pins
-  this.
-- **Touch has no hover**, so every interactive element has a `:active` press
-  state. Without one, a tap reads as lag even when nothing is slow.
-- Display type is Fraunces from Google Fonts, with Georgia and the system
-  serif behind it. The app already needs the network for the forecast and the
-  planner, so a webfont costs nothing extra — and it degrades to the fallback
-  cleanly if the request fails.
-
-**On this machine:** open `http://127.0.0.1:8765` in Chrome or Edge and use
-the install button in the address bar, or the banner the app shows. It gets a
-window, a dock/taskbar icon, and opens straight to your last plan.
-
-**On your phone:** `python run.py --serve --lan` prints a `http://192.168.x.x:8765`
-address to open on the same wifi.
-
-> **The catch, stated plainly:** service workers and the browser's geolocation
-> API both require a *secure context*, which means `localhost` or HTTPS. A LAN
-> address over plain HTTP is neither. So on your phone the app works as a web
-> page, and iOS "Add to Home Screen" still gives you a full-screen icon, but
-> you will not get the Android install prompt, offline caching, or the "use my
-> location" button — type the location instead. The page detects this and says
-> so rather than failing silently. To get the full thing on a phone, put it
-> behind HTTPS (a tunnel like `cloudflared` is the least painful route).
-
-Offline, the app still opens and shows your last plan from `localStorage` —
-which is the actual failure case, standing outside a bar with one bar of signal
-trying to remember which street the next stop is on. It will not plan a *new*
-date without signal, and says so.
-
-The icons are generated, not hand-drawn: `python tools/make_icons.py`.
-
-## The seven inputs
-
-| Input | What it actually changes |
-|---|---|
-| **location** | Resolved to coordinates, which go into the prompt with a radius. This is what makes suggestions local rather than city-generic. |
-| **budget** | A hard cap, split across stops by stage. Checked against the arithmetic afterwards. |
-| **relationship stage** | The biggest lever. Changes stop count, total length, and whether a reservation is a compliment or a trap. |
-| **clothing style** | Filters venues by door policy. A plan that gets you turned away is a failed plan. |
-| **weather** | Fetched from Open-Meteo, or typed. Decides indoor/outdoor and forces a named fallback for every exposed stop. |
-| **interests** | At least two stops must connect to them — specifically, not "a museum because they said art". |
-| **transportation** | Sets the radius. Walking means 15 minutes between stops; transit means one line; car means parking is a real constraint. |
-
-Plus the ones a time-ordered itinerary can't do without: the date, the start
-time, roughly how long, and a free-text note for dietary limits, mobility, or
-anything to avoid.
-
-### Location, specifically
-
-Two ways in, both ending at coordinates:
-
-- **Type it.** The field autocompletes against Open-Meteo's geocoder as you
-  type; picking a result attaches its coordinates. This is how you tell Alfama
-  in Lisbon from Alfamén in Aragon, which the picker will happily offer you
-  both of.
-- **Tap the pin.** The browser hands over GPS coordinates, and `geo.reverse()`
-  turns them into a neighbourhood name via Nominatim — `38.7139, -9.1289`
-  comes back as "Alfama, Lisboa".
-
-Coordinates matter more than the name. They go into the prompt as an explicit
-anchor with a radius set by the transport mode — 1.5 km walking, 12 km by car
-(`models.RADIUS_KM`) — along with an instruction to name the neighbourhood each
-stop is in and to avoid the city's famous places if they are on the other side
-of town. A plan anchored on a point is local; one anchored on the string
-"London" is a guess about which part.
-
-They also pin the forecast to the same point the date happens at, rather than
-to whatever the geocoder thought "London" meant.
-
-Neither service needs an API key, so a clone of this repo runs as-is. Nominatim
-asks for a descriptive User-Agent and at most one request a second; `geo.py`
-enforces both. Don't remove that — it is the price of a free service.
+> Everything below describes the Python build. Much of it applies to both
+> sides — `docs/` is a port of the same rules, the same venue logic and the
+> same hard-won facts — but the file names, the endpoints and the model path
+> are the Python one.
 
 ## Architecture
 
@@ -529,24 +586,34 @@ optional by construction, and cutting the closer always beats rushing dinner.
 
 ## Status
 
-Verified working, in a browser against live services: location autocomplete,
-"use my location" (reverse geocoding `38.7139, -9.1289` → "Alfama, Lisboa"),
-coordinates reaching the prompt with a radius, the Open-Meteo forecast, the
-rule checks, the offline planner, last-plan restore after a reload, the CLI,
-the HTML output, and the mobile layout. 148 tests pass.
+**The static app has been driven end to end in a browser**, served from a
+subpath to imitate `you.github.io/kindling/`. Ten screens, Boston, walking,
+about eleven seconds: three stops anchored on the New England Aquarium, a real
+bar, live music, four map tiles, a verified photograph, no warnings, no errors
+in the console. Location autocomplete, "use my location" (`38.7139, -9.1289` →
+"Alfama, Lisboa"), the forecast, the rule checks, last-plan restore after a
+reload and the mobile layout all work against the live services.
+
+Before the port, each of the five cross-origin calls was tested from a
+third-party origin rather than assumed: Nominatim search and reverse,
+Open-Meteo geocoding and forecast, and Wikipedia with `origin=*`. All five
+answer a browser directly.
 
 **Unverified: the service worker and the install prompt.** The browser
 available here blocks service-worker registration outright — registering *any*
 path, including one that does not exist, fails identically — so offline
 caching and the Android install banner have never actually run. The code is
-conventional and the assets are wired correctly (`test_app_shell` checks the
-manifest, the icons it declares, and the precache list), but treat the first
-install as untested. Everything that does not depend on a service worker,
-including offline last-plan restore, works.
+conventional and the assets are wired correctly, but treat the first install as
+untested. Everything that does not depend on a service worker, including
+offline last-plan restore, works.
 
 **Unverified: the model stage has never made a real API call** — no credentials
-existed in the environment where it was built. The request shape follows the
-current SDK and is asserted against a stub (`test_model_request`), and the
-response maps cleanly into `Plan`, but the first live run is still the first
-live run. Expect to spend an afternoon on `planner.SYSTEM` after seeing real
-output; that prompt is the product and nobody gets it right first try.
+existed in the environment where it was built, which is also why it is the
+Python side and not the published app. The request shape follows the current
+SDK and is asserted against a stub (`test_model_request`), and the response
+maps cleanly into `Plan`, but the first live run is still the first live run.
+Expect to spend an afternoon on `planner.SYSTEM` after seeing real output; that
+prompt is the product and nobody gets it right first try. The scouting pass and
+the optional Google-ratings path are untested for the same reason.
+
+407 Python tests pass, offline, with no key and no spend.

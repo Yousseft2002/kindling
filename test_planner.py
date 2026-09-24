@@ -1607,6 +1607,122 @@ def test_app_shell() -> None:
     check("python files are not servable", ".py" not in server.STATIC)
 
 
+
+def test_static_app() -> None:
+    """The browser build in docs/, which is what GitHub Pages serves.
+
+    None of this can be checked by running the Python app - it is a separate
+    implementation - and every failure here is silent in a browser: a path
+    that resolves to the domain root just 404s into an empty page.
+    """
+    print("\nstatic app (docs/)")
+
+    import json as _json
+    import re as _re
+    from pathlib import Path
+
+    docs = Path(__file__).resolve().parent / "docs"
+    check("the static app exists", docs.is_dir())
+
+    index = (docs / "index.html").read_text(encoding="utf-8")
+    app = (docs / "app.js").read_text(encoding="utf-8")
+    sw = (docs / "sw.js").read_text(encoding="utf-8")
+    lib = {p.name: p.read_text(encoding="utf-8") for p in sorted((docs / "lib").glob("*.js"))}
+
+    # --- Pages serves a project site from a subpath -----------------------
+    #
+    # https://you.github.io/kindling/ - so a leading "/" points at
+    # you.github.io itself. This is the single most likely way the deploy
+    # breaks while working perfectly on localhost.
+    for attr in ('href="/', 'src="/'):
+        bad = index.count(attr)
+        check(f"the page has no absolute {attr[:-2]}", bad == 0, f"{bad} found")
+    check("Jekyll is disabled, so no filename is reinterpreted",
+          (docs / ".nojekyll").exists())
+
+    # --- every module it imports is actually there ------------------------
+    sources = {docs / "app.js": app}
+    sources.update({docs / "lib" / n: t for n, t in lib.items()})
+    missing = [f"{path.name} -> {spec}"
+               for path, text in sources.items()
+               for spec in _re.findall(r"from\s+'(\.[^']+)'", text)
+               if not (path.parent / spec).exists()]
+    check("every imported module exists on disk", not missing, str(missing))
+    check("the page loads the app as a module", 'type="module"' in index)
+
+    # --- no server ---------------------------------------------------------
+    #
+    # The whole point of this build. One leftover /api/ call and the app
+    # works only on the machine it was developed on.
+    for name, text in [("app.js", app), *lib.items()]:
+        check(f"{name} calls no local endpoint", "/api/" not in text)
+
+    # --- the service worker, resolved relative to itself -------------------
+    check("the service worker resolves paths against its own location",
+          "new URL('./', self.location)" in sw)
+    precached = _re.findall(r"at\('([^']+)'\)", sw)
+    gone = [p for p in precached if p != "./" and not (docs / p).exists()]
+    check("every precached file exists on disk", not gone, str(gone))
+    check("the service worker never caches third-party data",
+          "url.origin !== self.location.origin" in sw)
+    check("the cache is versioned, so a redeploy is picked up", "VERSION" in sw)
+
+    manifest = _json.loads((docs / "manifest.webmanifest").read_text(encoding="utf-8"))
+    check("the manifest starts at the app, not the domain root",
+          manifest["start_url"] == "./" and manifest["scope"] == "./")
+    absent = [i["src"] for i in manifest["icons"] if not (docs / i["src"]).exists()]
+    check("every icon the manifest declares exists", not absent, str(absent))
+    check("one icon is maskable, or Android crops the mark badly",
+          any(i.get("purpose") == "maskable" for i in manifest["icons"]))
+
+    # --- the rules that took a bug each to learn --------------------------
+    #
+    # Reduced motion: `.screen.enter-up` is a two-class selector, so a bare
+    # `.screen{transform:none}` loses to it and people who asked for no
+    # motion get it anyway. Every direction class used has to be named.
+    block = index[index.index("prefers-reduced-motion"):]
+    block = block[:block.index("}\n</style>") + 1] if "}\n</style>" in block else block[:600]
+    for cls in ("enter-up", "enter-down", "exit-up", "exit-down"):
+        check(f"reduced motion overrides .screen.{cls}", f".screen.{cls}" in block)
+
+    # Tiles inside a short clipped box are judged off-screen and never
+    # fetched, which is a blank map rather than a slow one.
+    # Only the tile <img> itself - the comment above it says the words, and
+    # the Wikipedia photograph further down is lazy on purpose.
+    start = app.index("tiles +=")
+    tag = app[start:app.index(";", start)]
+    check("map tiles are not lazily loaded", "lazy" not in tag)
+    check("cached tiles are revealed without waiting for a load event",
+          ".complete" in app)
+
+    # Nominatim allows one request a second. One gate, or the limit is a
+    # suggestion.
+    net = lib["net.js"]
+    # places.js owns the endpoints; net.js owns the one-a-second gate. The
+    # invariant is that no module reaches Nominatim except through nominatim().
+    stray = [n for n, t in lib.items()
+             if "nominatim.openstreetmap.org" in t and n != "places.js"]
+    check("only places.js names the Nominatim endpoints", not stray, str(stray))
+    check("every Nominatim call goes through the rate gate",
+          "getJSON(SEARCH" not in lib["places.js"]
+          and "getJSON(REVERSE" not in lib["places.js"]
+          and "nominatim(" in lib["places.js"])
+    check("the Nominatim gate serialises requests", "chain" in net or "queue" in net)
+    check("Wikipedia is asked for CORS explicitly", "origin: '*'" in lib["wiki.js"]
+          or "origin=*" in lib["wiki.js"])
+    check("a photograph is checked against the article's own coordinates",
+          "NEAR_KM" in lib["wiki.js"])
+    check("a specific place is only accepted near its container",
+          "NEAR_KM" in lib["places.js"])
+    check("opening hours are read before ordering the evening",
+          "closesAt" in lib["plan.js"])
+
+    # An invented affiliate tag does not earn money - it breaks the link and
+    # can close the account.
+    partners = _re.search(r"PARTNERS = \{([^}]*)\}", lib["links.js"]).group(1)
+    check("no affiliate tag is invented",
+          not _re.search(r":\s*'[^']+'", partners), partners.strip())
+
 # ---------------------------------------------------------------------------
 
 def main() -> int:
@@ -1637,7 +1753,7 @@ def main() -> int:
                test_affiliates, test_model_request, test_cost, test_research, test_repair,
                test_model_failure_falls_back,
                test_defaults, test_server_input, test_render, test_env,
-               test_jobs, test_app_shell):
+               test_jobs, test_app_shell, test_static_app):
         fn()
 
     print()
