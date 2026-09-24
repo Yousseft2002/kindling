@@ -12,7 +12,7 @@
  * and would cache the wrong thing, or nothing at all.
  */
 
-const VERSION = 'kindling-v2';
+const VERSION = 'kindling-v3';
 const ROOT = new URL('./', self.location);           // .../kindling/
 const at = path => new URL(path, ROOT).toString();
 
@@ -37,7 +37,8 @@ self.addEventListener('install', event => {
     caches.open(VERSION)
       // addAll is all-or-nothing; one 404 would leave the app with no cache
       // at all, so each file is added on its own and failures are tolerated.
-      .then(cache => Promise.allSettled(SHELL.map(url => cache.add(url))))
+      .then(cache => Promise.allSettled(SHELL.map(url =>
+        cache.add(new Request(url, { cache: 'no-cache' })))))
       .then(() => self.skipWaiting())
   );
 });
@@ -93,7 +94,12 @@ self.addEventListener('fetch', event => {
   // page: index.html is handled above, network-first.
   event.respondWith(
     caches.match(request).then(hit => {
-      const fresh = fetch(request).then(response => {
+      // `no-cache` revalidates with the server rather than trusting the
+      // browser's own freshness lifetime. Without it the background refresh
+      // is answered by the HTTP cache - GitHub Pages sends max-age=600 - and
+      // a stale worker cache is simply refilled from a stale browser cache.
+      // It costs one conditional request per asset and usually a 304.
+      const fresh = fetch(request, { cache: 'no-cache' }).then(response => {
         if (response.ok) {
           const copy = response.clone();
           caches.open(VERSION).then(c => c.put(request, copy)).catch(() => {});
