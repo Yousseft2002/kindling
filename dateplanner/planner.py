@@ -452,9 +452,16 @@ def _fit_window(stops: list[Stop], max_hours: float, min_stops: int = 2) -> None
 
     limit = int(max_hours * 60)
     while len(stops) > min_stops and span_minutes() > limit:
-        stops.pop()
+        # Not simply the last stop. `_respect_hours` has already moved dinner
+        # to the end, so popping blindly cuts the one thing the docstring
+        # promises to keep - a Boston evening came back as drinks, live music
+        # and more drinks, with no dinner in it. Cut the last non-food stop.
+        i = next((n for n in range(len(stops) - 1, 0, -1)
+                  if stops[n].kind != "food"), len(stops) - 1)
+        stops.pop(i)
         stops[-1].travel_next = ""
         stops[-1].travel_minutes = 0
+        _restart(stops)
 
     # Still over at the minimum number of stops: take it out of the two longest,
     # never below 30 minutes - a 20-minute dinner is not a plan.
@@ -516,8 +523,12 @@ def _slots_for(prefs: Prefs, w: Weather) -> list[str]:
         return [opener, anchor, "food"]
 
     slots = [opener, anchor, "food"]
+    # A closer, for the stages where the night can run on. It is a nightcap,
+    # not a second helping of the anchor: someone who asked for jazz was
+    # getting two music stops, and in a city with one tagged jazz bar that
+    # printed the same sentence twice.
     if prefs.relationship_stage in ("dating", "long_term", "special_occasion"):
-        slots.append("music")
+        slots.append("drinks" if anchor == "music" else "music")
     return slots
 
 
@@ -683,10 +694,19 @@ def _offline_plan(prefs: Prefs, w: Weather) -> Plan:
         if venue is None:
             # Nothing real nearby for this slot. Say what to look for instead
             # of inventing a name.
-            stops.append(_placeholder(slot, prefs, t, minutes, cost, last))
+            stop = _placeholder(slot, prefs, t, minutes, cost, last)
         else:
-            used.add(venue.name.lower())
-            stops.append(_real_stop(slot, venue, prefs, w, t, minutes, cost, last))
+            stop = _real_stop(slot, venue, prefs, w, t, minutes, cost, last)
+
+        # An unfillable slot produces the same sentence every time, so two of
+        # them read as "somewhere with live music near Boston" twice, which is
+        # the app looking broken rather than looking honest. Skip the repeat
+        # and spend neither the time nor the budget on it.
+        if stop.name.lower() in used:
+            continue
+
+        used.add(stop.name.lower())
+        stops.append(stop)
 
         budget_left = max(0.0, budget_left - cost)
         t += minutes + (0 if last else 12)

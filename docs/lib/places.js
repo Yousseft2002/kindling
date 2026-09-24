@@ -44,17 +44,29 @@ const KIND_LABEL = {
   wine: 'Wine shop', ice_cream: 'Ice cream', bakery: 'Bakery', deli: 'Deli',
 };
 
+/* Nominatim resolves a category through its special-phrase table, which is
+ * keyed on short names. Multi-word guesses mostly return nothing at all:
+ * "live music venue" and "jazz club" both score zero in Lisbon and in Boston,
+ * two cities not short of either, while "jazz" alone finds Onda Jazz. Same
+ * trap with "market", which finds nothing anywhere - the phrase is
+ * "marketplace", and it finds Mercado da Ribeira and Quincy Market. Measured
+ * against both cities, not guessed. */
 export const SLOT_WORDS = {
   drinks: ['bar', 'pub'],
   food: ['restaurant', 'bistro'],
   coffee: ['cafe', 'coffee shop'],
-  music: ['live music venue', 'jazz club'],
+  music: ['jazz', 'nightclub'],
   show: ['theatre', 'cinema'],
   activity: ['museum', 'gallery'],
   aquarium: ['aquarium', 'zoo'],
   viewpoint: ['viewpoint', 'park'],
-  shopping: ['market', 'bookshop'],
+  shopping: ['marketplace', 'bookshop'],
 };
+
+/* Last resort for the music slot, matched against bar names. Deliberately
+ * not the bare word "music": that returns Music Hall Place and Music Oval -
+ * a street and a green - rather than anywhere you can hear a band. */
+const MUSICAL = /\b(jazz|blues|fado|soul|vinyl|live|music|band|sessions)\b/i;
 
 const NOISE_CATEGORIES = new Set(
   ['railway', 'highway', 'public_transport', 'barrier', 'waterway']);
@@ -104,6 +116,7 @@ function toVenue(r) {
     kind: label(r.type),
     cuisine: (ex.cuisine || '').replace(/_/g, ' ').replace(/;/g, ', '),
     openingHours: ex.opening_hours || '',
+    liveMusic: ex.live_music === 'yes',
     website: ex.website || ex['contact:website'] || '',
     address: [street, town].filter(Boolean).join(', '),
   };
@@ -190,6 +203,14 @@ export function nearby(slot, lat, lon, transport = 'walking', limit = 6) {
       });
       const out = (d || []).filter(usable).map(toVenue).filter(Boolean).slice(0, limit);
       if (out.length) return out;
+    }
+    // Most places with a band on are tagged as an ordinary bar, so before
+    // falling back to "somewhere with live music near Lisbon" - which is the
+    // app admitting it does not know - read the bars it already fetched and
+    // keep the ones that say they have music.
+    if (slot === 'music') {
+      const bars = await nearby('drinks', lat, lon, transport, limit);
+      return bars.filter(v => v.liveMusic || MUSICAL.test(v.name)).slice(0, limit);
     }
     return [];
   });

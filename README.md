@@ -225,7 +225,9 @@ That makes one tiny request and says whether the key is missing, invalid, out
 of credit, or fine. It prints the key's length and its `sk-ant-` prefix so you
 can spot a truncated paste, and never the key itself.
 
-`.env` is gitignored. A real environment variable always beats the file.
+`.env` is gitignored and holds a placeholder, not a key - nothing in this
+repo has ever contained a real one. A real environment variable always beats
+the file.
 
 > Everything below describes the Python build. Much of it applies to both
 > sides — `docs/` is a port of the same rules, the same venue logic and the
@@ -617,3 +619,10 @@ prompt is the product and nobody gets it right first try. The scouting pass and
 the optional Google-ratings path are untested for the same reason.
 
 407 Python tests pass, offline, with no key and no spend.
+
+---
+
+## Licence
+
+MIT - see [LICENSE](LICENSE). The copyright line says "Youssef"; replace it
+with the name you want on it before anyone else reads the repo.

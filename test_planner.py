@@ -546,6 +546,59 @@ def test_offline_planner() -> None:
     check("the offline plan's stated total matches its stops",
           abs(p.total_cost - sum(s.cost for s in p.stops)) < 0.01)
 
+    # An evening never says the same thing twice.
+    #
+    # Asking for jazz used to produce two music slots - the anchor and the
+    # closer - and in a city with one tagged jazz bar both fell back to the
+    # same sentence, so the plan read "somewhere with live music near Boston"
+    # twice. That is the app looking broken rather than looking honest.
+    jazz = planner._slots_for(prefs(relationship_stage="dating",
+                                    interests=["jazz", "photography"]), DRY)
+    check("a music evening gets one music stop, not two",
+          jazz.count("music") == 1, str(jazz))
+    check("the closer is still there, as a nightcap",
+          len(jazz) == 4 and jazz[-1] == "drinks", str(jazz))
+
+    art = planner._slots_for(prefs(relationship_stage="dating",
+                                   interests=["art"]), DRY)
+    check("a non-music evening still closes on music",
+          art[-1] == "music" and art.count("music") == 1, str(art))
+
+    # And the belt-and-braces version, at the point the stops are built: two
+    # unfillable slots produce identical placeholders, whatever the slot list
+    # says.
+    empty = {k: [] for k in VENUES}
+    saved = dict(VENUES)
+    VENUES.clear(); VENUES.update(empty)
+    try:
+        bare = planner._offline_plan(prefs(relationship_stage="dating",
+                                           interests=["jazz"]), DRY)
+    finally:
+        VENUES.clear(); VENUES.update(saved)
+    names = [s.name.lower() for s in bare.stops]
+    check("no two stops in a plan share a name", len(names) == len(set(names)), str(names))
+    check("a plan with nothing nearby still has stops", len(bare.stops) >= 2, str(len(bare.stops)))
+
+    # Category words Nominatim actually resolves. Multi-word guesses return
+    # nothing at all, which is a silent failure: the slot just falls back to
+    # a placeholder and the plan looks thin for no visible reason.
+    from dateplanner import osm as _osm_slots
+    check("the music slot asks for words the phrase table knows",
+          _osm_slots.SLOTS["music"] == ["jazz", "nightclub"],
+          str(_osm_slots.SLOTS["music"]))
+    check("the shopping slot asks for marketplace, not market",
+          "marketplace" in _osm_slots.SLOTS["shopping"]
+          and "market" not in _osm_slots.SLOTS["shopping"],
+          str(_osm_slots.SLOTS["shopping"]))
+    check("a bar with a band can fill the music slot",
+          bool(_osm_slots.MUSICAL.search("Wally's Cafe Jazz Club")))
+    # The name match is loose on purpose, so the thing keeping Music Hall
+    # Place and Music Oval out of the evening is the noise filter, not the
+    # regex. Searching the bare word "music" is what surfaces them.
+    check("a street called Music Hall Place is not a venue",
+          not _osm_slots._usable({"name": "Music Hall Place",
+                                  "category": "highway", "type": "pedestrian"}))
+
     # The whole point of the rules module is that the offline planner passes it.
     warnings = rules.check(p, prefs(), DRY)
     check("the offline plan passes its own rule checks", warnings == [], str(warnings))
@@ -660,6 +713,28 @@ def test_fit_window() -> None:
     s = legs()
     planner._fit_window(s, 3.5)
     check("an overlong plan loses its last stop", len(s) == 3, str(len(s)))
+
+    # Dinner is not the stop to cut, wherever it ended up sitting.
+    #
+    # `_respect_hours` moves food to the end of the evening so nothing is
+    # scheduled after its venue shuts. A trim that pops the tail therefore
+    # cuts dinner - which is exactly backwards, and produced a real Boston
+    # plan of drinks, live music and more drinks with nothing to eat in it.
+    mixed = [
+        stop(name="Bar", kind="drinks", start="17:00", minutes=60, travel_minutes=10),
+        stop(name="Gig", kind="music", start="18:10", minutes=60, travel_minutes=10),
+        stop(name="Nightcap", kind="drinks", start="19:20", minutes=60, travel_minutes=10),
+        stop(name="Dinner", kind="food", start="20:30", minutes=60, travel_minutes=0),
+    ]
+    planner._fit_window(mixed, 3.5)
+    kinds = [x.kind for x in mixed]
+    check("a trim keeps dinner", "food" in kinds, str(kinds))
+    check("a trim cuts the closer instead", len(mixed) == 3, str(len(mixed)))
+    check("the evening still starts when it was told to", mixed[0].start == "17:00",
+          mixed[0].start)
+    # The stops that remain have to close the gap the cut left behind.
+    starts = [x.start for x in mixed]
+    check("the stops after a cut are re-timed", starts == sorted(starts), str(starts))
     check("the new last stop has no onward travel", s[-1].travel_next == "" and s[-1].travel_minutes == 0)
 
     s = legs()

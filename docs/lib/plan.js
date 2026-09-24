@@ -127,9 +127,12 @@ export function slotsFor(prefs, weather) {
   const opener = (prefs.stage === 'first_date' && early) ? 'coffee' : 'drinks';
 
   const slots = [opener, anchor, 'food'];
-  if (prefs.stage !== 'first_date'
-      && ['dating', 'long_term', 'special_occasion'].includes(prefs.stage)) {
-    slots.push('music');
+  // A closer, for the stages where the night can run on. It is a nightcap,
+  // not a second helping of the anchor: someone who asked for jazz was
+  // getting two music stops, which in a city with one tagged jazz bar meant
+  // the same sentence printed twice.
+  if (['dating', 'long_term', 'special_occasion'].includes(prefs.stage)) {
+    slots.push(anchor === 'music' ? 'drinks' : 'music');
   }
   return slots;
 }
@@ -162,9 +165,16 @@ export async function build(prefs, weather, onPhase = () => {}) {
     const hits = await nearby(slot, prefs.lat, prefs.lon, prefs.transport, 6);
     const venue = pick(hits, used);
 
-    stops.push(venue ? realStop(slot, venue, prefs, t, minutes, cost, last)
-                     : placeholder(slot, prefs, t, minutes, cost, last));
-    if (venue) used.add(venue.name.toLowerCase());
+    const stop = venue ? realStop(slot, venue, prefs, t, minutes, cost, last)
+                       : placeholder(slot, prefs, t, minutes, cost, last);
+    // An unfillable slot produces the same sentence every time, so two of
+    // them read as "somewhere with live music near Boston" twice - which is
+    // the app looking broken rather than looking honest. Skip the repeat and
+    // spend neither the time nor the budget on it.
+    if (used.has(stop.name.toLowerCase())) continue;
+
+    stops.push(stop);
+    used.add(stop.name.toLowerCase());
     left = Math.max(0, left - cost);
     t += minutes + (last ? 0 : 12);
   }
@@ -310,9 +320,20 @@ export function fitWindow(stops, maxHours) {
   };
   const limit = Math.round(maxHours * 60);
   while (stops.length > 2 && span() > limit) {
-    stops.pop();
-    stops[stops.length - 1].travelNext = '';
-    stops[stops.length - 1].travelMinutes = 0;
+    // Not simply the last stop. respectHours has already moved dinner to the
+    // end, so popping blindly cuts the one thing this is supposed to protect
+    // - a Boston evening came back as drinks, live music and more drinks,
+    // with no dinner in it at all. Cut the last stop that is not food.
+    let i = -1;
+    for (let n = stops.length - 1; n > 0; n--) {
+      if (stops[n].kind !== 'food') { i = n; break; }
+    }
+    if (i < 0) i = stops.length - 1;       // nothing but food: cut the tail
+    stops.splice(i, 1);
+    const last = stops[stops.length - 1];
+    last.travelNext = '';
+    last.travelMinutes = 0;
+    reflow(stops);
   }
   for (const s of [...stops].sort((a, b) => b.minutes - a.minutes).slice(0, 2)) {
     const over = span() - limit;

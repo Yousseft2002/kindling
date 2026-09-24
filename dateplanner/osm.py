@@ -69,11 +69,11 @@ class Match:
     """One real place, as OpenStreetMap knows it."""
 
     __slots__ = ("name", "lat", "lon", "kind", "cuisine",
-                 "opening_hours", "website", "phone", "address")
+                 "opening_hours", "website", "phone", "address", "live_music")
 
     def __init__(self, name: str, lat: float, lon: float, kind: str = "",
                  cuisine: str = "", opening_hours: str = "", website: str = "",
-                 phone: str = "", address: str = "") -> None:
+                 phone: str = "", address: str = "", live_music: bool = False) -> None:
         self.name = name
         self.lat = lat
         self.lon = lon
@@ -83,6 +83,7 @@ class Match:
         self.website = website
         self.phone = phone
         self.address = address
+        self.live_music = live_music
 
     def __repr__(self) -> str:  # pragma: no cover - debugging only
         return f"Match({self.name!r}, {self.kind!r})"
@@ -134,13 +135,21 @@ SLOTS = {
     "drinks": ["bar", "pub", "wine bar"],
     "food": ["restaurant", "bistro"],
     "coffee": ["cafe", "coffee shop"],
-    "music": ["live music venue", "jazz club"],
+    # "live music venue" and "jazz club" both return zero results in Lisbon
+    # and in Boston - the phrase table is keyed on short names, and "jazz"
+    # alone finds Onda Jazz. Measured against both cities.
+    "music": ["jazz", "nightclub"],
     "show": ["theatre", "cinema"],
     "activity": ["museum", "gallery"],
     "aquarium": ["aquarium", "zoo"],
     "viewpoint": ["viewpoint", "park"],
-    "shopping": ["market", "bookshop"],
+    "shopping": ["marketplace", "bookshop"],   # "market" finds nothing anywhere
 }
+
+# Last resort for the music slot, matched against bar names. Deliberately not
+# the bare word "music": that returns Music Hall Place and Music Oval - a
+# street and a green - rather than anywhere you can hear a band.
+MUSICAL = re.compile(r"\b(jazz|blues|fado|soul|vinyl|live|music|band|sessions)\b", re.I)
 
 # Searching "aquarium" in Boston returns the New England Aquarium and then
 # four subway stops named after it. Anything in these OSM categories is
@@ -190,6 +199,12 @@ def nearby(slot: str, lat: float | None, lon: float | None,
         if out:
             break
 
+    # Most places with a band on are tagged as an ordinary bar, so before
+    # giving up on the music slot, read the bars and keep the musical ones.
+    if not out and slot == "music":
+        out = [m for m in nearby("drinks", lat, lon, transport, limit)
+               if m.live_music or MUSICAL.search(m.name)][:limit]
+
     if out:
         _venues.set(key, out)
     log.info("osm: %d candidates for %r near %.3f,%.3f", len(out), slot, lat, lon)
@@ -235,6 +250,7 @@ def _parse(results: list) -> Match | None:
         website=extra.get("website") or extra.get("contact:website") or "",
         phone=extra.get("phone") or extra.get("contact:phone") or "",
         address=address,
+        live_music=(extra.get("live_music") or "").lower() == "yes",
     )
 
 
