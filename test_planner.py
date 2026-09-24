@@ -1740,7 +1740,17 @@ def test_static_app() -> None:
     check("every precached file exists on disk", not gone, str(gone))
     check("the service worker never caches third-party data",
           "url.origin !== self.location.origin" in sw)
-    check("the cache is versioned, so a redeploy is picked up", "VERSION" in sw)
+    check("the cache is versioned", "VERSION" in sw)
+
+    # A deploy that does not touch sw.js leaves the worker byte-identical, so
+    # the browser never reinstalls it. Under plain cache-first that means a
+    # returning visitor never sees the new app at all - the fix sits on the
+    # server while the cached bug keeps being served. Observed live on the
+    # first redeploy, not theorised.
+    check("static assets are refreshed in the background, not cached forever",
+          "caches.match(request).then(hit => {" in sw and "return hit || fresh;" in sw)
+    check("the page itself is network-first, so a redeploy lands",
+          "request.mode === 'navigate'" in sw)
 
     manifest = _json.loads((docs / "manifest.webmanifest").read_text(encoding="utf-8"))
     check("the manifest starts at the app, not the domain root",

@@ -109,6 +109,14 @@ English article says Lisbon while the user typed Lisboa. Appending the place
 name to the search query has the same failure — it returned the Faneuil Hall
 article for a restaurant *inside* Faneuil Hall. With coordinates in hand, don't.
 
+**A service worker that caches hard will outlive the bug it cached.** The
+first redeploy published a fix and the live site kept serving the old code:
+nothing in that deploy touched `sw.js`, so the worker was byte-identical, the
+browser never reinstalled it, and cache-first happily served yesterday's app
+forever. Static assets are now stale-while-revalidate - instant from cache,
+replaced in the background - and the page itself is network-first. Bumping a
+version constant by hand is not a mechanism.
+
 **Every path is relative.** A GitHub Pages project site lives at
 `you.github.io/kindling/`, so an absolute `/icons/…`, or a service worker
 caching `'/'`, points at the domain root and breaks. `sw.js` resolves
@@ -601,13 +609,11 @@ third-party origin rather than assumed: Nominatim search and reverse,
 Open-Meteo geocoding and forecast, and Wikipedia with `origin=*`. All five
 answer a browser directly.
 
-**Unverified: the service worker and the install prompt.** The browser
-available here blocks service-worker registration outright — registering *any*
-path, including one that does not exist, fails identically — so offline
-caching and the Android install banner have never actually run. The code is
-conventional and the assets are wired correctly, but treat the first install as
-untested. Everything that does not depend on a service worker, including
-offline last-plan restore, works.
+**The service worker registers on the published site.** It could never be
+tested locally - the browser available here blocks registration outright - and
+the first thing it did in the wild was serve a stale copy of the app after a
+redeploy, which is what the stale-while-revalidate note above is about. The
+Android install prompt is still untested.
 
 **Unverified: the model stage has never made a real API call** — no credentials
 existed in the environment where it was built, which is also why it is the

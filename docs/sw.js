@@ -12,7 +12,7 @@
  * and would cache the wrong thing, or nothing at all.
  */
 
-const VERSION = 'kindling-v1';
+const VERSION = 'kindling-v2';
 const ROOT = new URL('./', self.location);           // .../kindling/
 const at = path => new URL(path, ROOT).toString();
 
@@ -77,15 +77,32 @@ self.addEventListener('fetch', event => {
     return;
   }
 
-  // Static assets: cache first. They only change when the app does, and the
-  // app changing bumps VERSION.
+  // Static assets: serve the cached copy at once, and replace it in the
+  // background with whatever the network says.
+  //
+  // This used to be plain cache-first, on the reasoning that the assets only
+  // change when the app does and the app changing bumps VERSION. Both halves
+  // of that were wrong. A deploy that does not touch this file leaves the
+  // worker byte-identical, so the browser never reinstalls it and never
+  // refetches anything - the published fix sat on the server while the app
+  // kept serving the bug, which is exactly what happened on the first
+  // redeploy. Remembering to bump a constant by hand is not a mechanism.
+  //
+  // So the page still opens instantly from cache, and the next open has the
+  // new version. Nothing here is a document, so no one reads a half-updated
+  // page: index.html is handled above, network-first.
   event.respondWith(
-    caches.match(request).then(hit => hit || fetch(request).then(response => {
-      if (response.ok) {
-        const copy = response.clone();
-        caches.open(VERSION).then(c => c.put(request, copy)).catch(() => {});
-      }
-      return response;
-    }))
+    caches.match(request).then(hit => {
+      const fresh = fetch(request).then(response => {
+        if (response.ok) {
+          const copy = response.clone();
+          caches.open(VERSION).then(c => c.put(request, copy)).catch(() => {});
+        }
+        return response;
+      });
+      // Offline with nothing cached is the only case that can still fail,
+      // and it fails as the network would.
+      return hit || fresh;
+    })
   );
 });
