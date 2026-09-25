@@ -53,7 +53,9 @@ function adopt(s) {
     access_token: s.access_token,
     refresh_token: s.refresh_token,
     expires_at: Number(s.expires_at) || Math.floor(Date.now() / 1000) + (Number(s.expires_in) || 3600),
-    user: { id: s.user.id, email: s.user.email },
+    user: { id: s.user.id, email: s.user.email,
+            // What Google calls them, to suggest as the name shown on posts.
+            name: s.user.user_metadata?.full_name || s.user.user_metadata?.name || '' },
   });
 }
 
@@ -138,6 +140,26 @@ export async function sendLink(email) {
   await call(`/auth/v1/otp?redirect_to=${encodeURIComponent(back)}`, {
     method: 'POST', signedIn: false, body: { email: email.trim(), create_user: true },
   });
+}
+
+/** Sign in with Google: off to Google by way of Supabase, and back here with
+ *  the session in the URL fragment, which takeRedirect() already reads - the
+ *  same return trip an emailed link makes. No email has to be sent at all,
+ *  which is the point: the built-in sender only mails the project's owner. */
+export function signInWithGoogle() {
+  const back = location.origin + location.pathname;
+  location.assign(`${BASE}/auth/v1/authorize?provider=google&redirect_to=${encodeURIComponent(back)}`);
+}
+
+/** Which ways in the project has switched on, so the page only offers those.
+ *  Asked once; a failure just means "email only". */
+let ways = null;
+export function signInWays() {
+  ways ||= fetch(`${BASE}/auth/v1/settings`, { headers: { apikey: KEY } })
+    .then(r => (r.ok ? r.json() : {}))
+    .then(s => ({ google: !!s?.external?.google, email: s?.external?.email !== false }))
+    .catch(() => ({ google: false, email: true }));
+  return ways;
 }
 
 export async function verifyCode(email, code) {

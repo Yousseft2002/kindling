@@ -80,6 +80,10 @@ export function initCommunity(opts = {}) {
     b.onclick = () => b.closest('dialog').close();
   });
   $('#signin_form').addEventListener('submit', onSignIn);
+  $('#si_google').onclick = () => {
+    $('#si_google').disabled = true;
+    C.signInWithGoogle();
+  };
   $('#name_form').addEventListener('submit', onName);
   $('#share_form').addEventListener('submit', onShare);
   $('#share_form').addEventListener('input', saveDraft);
@@ -294,6 +298,13 @@ function openSignIn() {
   $('#si_go').textContent = 'Email me a link';
   $('#si_say').textContent = 'We will email you a sign-in link. No password to remember.';
   $('#d_signin').showModal();
+  // Google only appears once it is switched on in Supabase, so the page can
+  // ship before the Google side is set up. Anything the person was doing is
+  // already saved (NEXT, the draft), because this leaves the page.
+  C.signInWays().then(w => {
+    $('#si_google_wrap').hidden = !w.google;
+    if (w.google) $('#si_say').textContent = 'One tap with Google, or we email you a link. No password either way.';
+  });
 }
 
 async function onSignIn(e) {
@@ -327,6 +338,9 @@ async function onSignIn(e) {
 
 function openName() {
   $('#nm_err').textContent = '';
+  // Signed in with Google: suggest their first name rather than a blank box.
+  const given = (C.user()?.name || '').trim().split(/\s+/)[0];
+  if (given && !$('#nm_name').value) $('#nm_name').value = given.slice(0, 32);
   $('#nm_city').value = $('#nm_city').value || city?.label || '';
   $('#d_name').showModal();
 }

@@ -2052,6 +2052,10 @@ def test_static_app() -> None:
     check("opening hours are read for the evening's weekday",
           "closesAt(hours, weekday)" in plan_js and "function covers" in lib["places.js"])
     check("the community can share outdoor spots and local treats", "'treat', 'outdoors'" in schema)
+    check("Google sign-in returns through the same fragment the email link uses",
+          "/auth/v1/authorize?provider=google" in comm and "history.replaceState" in comm)
+    check("the Google button only shows once Google is switched on",
+          'id="si_google_wrap" hidden' in index and "signInWays" in tab)
     check("the privacy page exists and is linked",
           (docs / "privacy.html").exists() and 'href="privacy.html"' in index)
 
