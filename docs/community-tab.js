@@ -29,7 +29,8 @@ const store = {
 const KINDS = {
   drinks: 'Drinks', coffee: 'Coffee', food: 'Dinner', music: 'Live music', show: 'Show or film',
   activity: 'Museum or gallery', aquarium: 'Aquarium or zoo', viewpoint: 'View or park',
-  shopping: 'Market or shops',
+  shopping: 'Market or shops', treat: 'Local treats (cheese, bakery)',
+  outdoors: 'Outdoors (hill, swim, sledding)',
 };
 const STAGE = {
   first_date: 'First date', getting_to_know: 'Getting to know', dating: 'Dating',

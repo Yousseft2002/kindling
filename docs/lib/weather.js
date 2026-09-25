@@ -75,6 +75,33 @@ export function parseOverride(text) {
   return w;
 }
 
+/** Sunset in local minutes past midnight, worked out from the date and the
+ *  position, for days the forecast cannot see. A January evening planned a
+ *  month ahead came back with no sunset at all, and put a hill at 17:55 -
+ *  an hour after dark - with nothing to warn about it.
+ *
+ *  The astronomy is good to a few minutes. The clock is the harder part: a
+ *  place's timezone is not knowable from coordinates without a lookup, so
+ *  this uses the browser's own offset for that date when the place is in
+ *  about the same zone (the usual case: planning somewhere near home), and
+ *  longitude / 15 otherwise. */
+export function estimateSunset(lat, lon, iso) {
+  if (lat == null || lon == null || !iso) return null;
+  const rad = Math.PI / 180;
+  const day = new Date(iso + 'T12:00:00Z');
+  const n = Math.floor((day - Date.UTC(day.getUTCFullYear(), 0, 0)) / 86400000);
+  const decl = -23.44 * Math.cos(rad * (360 / 365) * (n + 10));
+  const cosH = (Math.sin(-0.833 * rad) - Math.sin(lat * rad) * Math.sin(decl * rad))
+             / (Math.cos(lat * rad) * Math.cos(decl * rad));
+  if (cosH < -1 || cosH > 1) return null;                // polar day or night
+  const B = rad * (360 / 365) * (n - 81);
+  const eot = 9.87 * Math.sin(2 * B) - 7.53 * Math.cos(B) - 1.5 * Math.sin(B);
+  const setUtc = 720 - 4 * lon - eot + 4 * (Math.acos(cosH) / rad);
+  const browser = -new Date(iso + 'T12:00').getTimezoneOffset() / 60;
+  const zone = Math.abs(browser - lon / 15) <= 1.5 ? browser : Math.round(lon / 15);
+  return Math.round(((setUtc + zone * 60) % 1440 + 1440) % 1440);
+}
+
 /** Forecast for `iso` (YYYY-MM-DD) at a point. Always returns a weather
  *  object, so callers never branch on null. */
 export function forecast(lat, lon, iso) {
@@ -82,7 +109,9 @@ export function forecast(lat, lon, iso) {
 
   const days = Math.round((new Date(iso + 'T12:00') - new Date()) / 86400000);
   if (days < 0 || days > HORIZON_DAYS) {
-    return Promise.resolve(blank('unknown (outside forecast range)'));
+    const w = blank('unknown (outside forecast range)');
+    w.sunset = estimateSunset(lat, lon, iso);
+    return Promise.resolve(w);
   }
 
   return memo(`wx:${lat.toFixed(2)}:${lon.toFixed(2)}:${iso}`, HOUR / 2, async () => {
@@ -93,7 +122,7 @@ export function forecast(lat, lon, iso) {
               'precipitation_probability_max', 'wind_speed_10m_max', 'sunset'].join(','),
     });
     const day = d?.daily;
-    if (!day) return blank();
+    if (!day) return { ...blank(), sunset: estimateSunset(lat, lon, iso) };
 
     const first = k => (day[k] || [])[0] ?? null;
     const code = first('weather_code');

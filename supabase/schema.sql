@@ -55,7 +55,7 @@ returns boolean language sql immutable as $$
           or char_length(btrim(s ->> 'name')) not between 1 and 80
           or coalesce(s ->> 'kind', '') not in
              ('drinks', 'coffee', 'food', 'music', 'show', 'activity',
-              'aquarium', 'viewpoint', 'shopping')
+              'aquarium', 'viewpoint', 'shopping', 'treat', 'outdoors')
           or char_length(coalesce(s ->> 'note', '')) > 280
           or (s ? 'lat' and jsonb_typeof(s -> 'lat') not in ('number', 'null'))
           or (s ? 'lon' and jsonb_typeof(s -> 'lon') not in ('number', 'null'))

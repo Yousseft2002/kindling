@@ -1972,7 +1972,7 @@ def test_static_app() -> None:
         check(f"plan.js has the {rule.rstrip('(')} rule", rule in lib["plan.js"])
     build_js = lib["plan.js"][lib["plan.js"].index("export async function build"):]
     check("plan.js applies closing times after the trim, not before",
-          build_js.index("closeOnTime(stops)") > build_js.index("fitWindow(stops,"))
+          build_js.index("closeOnTime(stops") > build_js.index("fitWindow(stops,"))
     check("the location picker drops loose matches", "startsWith(typed)" in lib["places.js"])
 
     # --- the community ------------------------------------------------------
@@ -2008,6 +2008,19 @@ def test_static_app() -> None:
           "GUIDE_POSTS = 3" in comm and "GUIDE_LOVES = 10" in comm
           and "count(*) >= 3 and sum(i.love_count) >= 10" in schema)
     check("community text is escaped before it is shown", tab.count("esc(p.") >= 4)
+    # --- adventure, local-only, and hours by day ------------------------------
+    plan_js = lib["plan.js"]
+    check("five adventure levels, from a night in to wild",
+          all(f"{n}: [" in plan_js for n in range(1, 6)) and "'Stay in'" in plan_js and "'Wild'" in plan_js)
+    check("the adventure question is in the form", 'id="adventure"' in index and 'id="local_only"' in index)
+    check("local-only drops chains outright", "!localOnly || !isChain(c.name)" in plan_js)
+    check("an independent ranks above a chain even without the switch", "(chain(a) - chain(b))" in plan_js)
+    check("daylight is a closing time for anything outside", "function shutsAt" in plan_js and "sunset" in plan_js)
+    check("an outdoor start moves into daylight", "so you are outside while it is" in plan_js)
+    check("a cold plunge always carries its safety warning", "Cold water: never alone" in plan_js)
+    check("opening hours are read for the evening's weekday",
+          "closesAt(hours, weekday)" in plan_js and "function covers" in lib["places.js"])
+    check("the community can share outdoor spots and local treats", "'treat', 'outdoors'" in schema)
     check("the privacy page exists and is linked",
           (docs / "privacy.html").exists() and 'href="privacy.html"' in index)
 

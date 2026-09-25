@@ -104,6 +104,26 @@ evenings too long, so trimming follows two rules: fifteen minutes over comes
 out of the stays rather than costing a stop, and the stop built from what you
 said you like is the last one cut.
 
+**How brave, and how local.** One question sets the adventure level, 1 to 5.
+Stay in is a local shop, dinner picked up, then home with a film chosen for the
+month (Home Alone in December). Easy is the classic evening. Curious opens at a
+cheese shop, chocolatier or bookshop. Outdoorsy starts outside: sledding when
+there is snow, a hill or woods otherwise, a rink in the rain. Wild is a cold
+plunge (or a summer swim) at the nearest beach, then warming up, then dinner,
+and always carries a cold-water safety warning. Concord MA in January, measured:
+Nashawtuc Hill, The Cheese Shop, dinner on Main Street. Daylight is treated as a
+closing time for anything outside, and an outdoor start moves earlier to fit
+it. When the forecast cannot see the date, sunset is worked out from the date
+and position (within a few minutes). "Only local, independent places" drops
+known chains; with it off, independents still rank above chains. Chains are
+matched by name, because Nominatim does not return OSM's `brand` tag.
+
+Opening hours are read for the evening's weekday: "Tu-Sa 10:00-17:30; Su
+12:00-17:00" closes at 17:30 on a Saturday and is shut on Monday.
+
+The adventure levels, local-only and day-aware hours are browser-only for now.
+The Python planner still plans the level-2 evening with day-blind hours.
+
 **The community is optional and never in the way.** People share evenings they
 have been on, love the good ones, and become a city's local guides (3 evenings,
 10 loves). The planner reads what locals shared near the plan: their places rank
@@ -224,7 +244,7 @@ page is a key anyone can spend, so it needs a server.
 pip install -r requirements.txt
 python run.py --serve                            # the AI version, locally
 python run.py -l "Brooklyn" -b 90 --dry-run      # a real plan, zero API cost
-python test_planner.py                           # 475 offline tests, no key, no spend
+python test_planner.py                           # 484 offline tests, no key, no spend
 ```
 
 Two implementations of the same rules is a real cost, and worth saying out
@@ -653,7 +673,7 @@ Expect to spend an afternoon on `planner.SYSTEM` after seeing real output; that
 prompt is the product and nobody gets it right first try. The scouting pass and
 the optional Google-ratings path are untested for the same reason.
 
-475 Python tests pass, offline, with no key and no spend.
+484 Python tests pass, offline, with no key and no spend.
 
 ---
 

@@ -7,7 +7,7 @@
  * up, the clock is continuous, or the aquarium has shut.
  */
 
-import { nearby, lookup, closesAt } from './places.js';
+import { nearby, lookup, closesAt, isChain } from './places.js';
 import { look as wikiLook } from './wiki.js';
 import * as wx from './weather.js';
 import { distanceKm } from './net.js';
@@ -67,6 +67,24 @@ const JUST_WALK = 12;
 const LOCAL_KIND = {
   drinks: 'Bar', coffee: 'Café', food: 'Restaurant', music: 'Live music', show: 'Show',
   activity: 'Museum or gallery', aquarium: 'Aquarium', viewpoint: 'Viewpoint', shopping: 'Shop',
+  treat: 'Local shop', sweet: 'Ice cream', takeout: 'Restaurant', sled: 'Outdoors', hill: 'Outdoors',
+  nature: 'Outdoors', plunge: 'Outdoors', swim: 'Outdoors', rink: 'Ice rink',
+};
+
+/* Which kind of shared stop from the Community tab can fill each slot. */
+const COMMUNITY_KIND = {
+  treat: 'treat', sweet: 'treat', takeout: 'food', sled: 'outdoors', hill: 'outdoors', nature: 'outdoors',
+  plunge: 'outdoors', swim: 'outdoors', rink: 'activity',
+};
+
+/* How brave the evening is. Level 2 is the planner as it always was; the
+ * rest change which kinds of stop the night is made of - see slotsFor(). */
+export const ADVENTURE = {
+  1: ['Stay in', 'Local treats, dinner picked up on the way home, then blankets and a film chosen for the season.'],
+  2: ['Easy', 'A drink, something to look at, and a good dinner. The classic, done well.'],
+  3: ['Curious', 'Starts somewhere you would never have found: a cheese shop, a chocolatier, a bookshop.'],
+  4: ['Outdoorsy', 'Outside first: sledding if there is snow, a hill at sunset if not. Then warm up somewhere local.'],
+  5: ['Wild', 'A cold plunge in the nearest pond, a hot drink, and a big dinner. Not for the faint-hearted.'],
 };
 
 /* Minutes and share of budget per slot. Dinner gets the money and the time;
@@ -75,6 +93,9 @@ const SHAPE = {
   drinks: [50, 0.16], coffee: [40, 0.08], aquarium: [75, 0.22],
   activity: [70, 0.18], show: [110, 0.30], music: [70, 0.20],
   viewpoint: [40, 0.00], shopping: [35, 0.05], food: [95, 0.50],
+  treat: [30, 0.10], sweet: [25, 0.06], takeout: [30, 0.35], home: [150, 0.00],
+  sled: [75, 0.00], hill: [60, 0.00], nature: [70, 0.00], rink: [60, 0.12],
+  plunge: [30, 0.00], swim: [60, 0.00],
 };
 
 /* Slot -> the kind recorded on the stop, which drives the booking link and
@@ -82,14 +103,31 @@ const SHAPE = {
 const AS_KIND = {
   aquarium: 'activity', coffee: 'coffee', drinks: 'drinks', activity: 'activity',
   music: 'music', show: 'show', viewpoint: 'viewpoint', shopping: 'shopping',
-  food: 'food',
+  food: 'food', treat: 'shopping', sweet: 'shopping', takeout: 'food', home: 'home', rink: 'activity',
+  sled: 'outdoors', hill: 'outdoors', nature: 'outdoors', plunge: 'outdoors', swim: 'outdoors',
+};
+const OUTSIDE = new Set(['viewpoint', 'outdoors']);
+
+/* The weekday of the evening being planned, so opening hours are read for that
+ * day. Set by build(); null means read them the old, day-blind way. */
+let weekday = null;
+const closes = hours => closesAt(hours, weekday);
+
+/* A night in still needs a film, and the season should choose it. */
+const FILMS = {
+  1: ['About Time', 'Paddington 2'], 2: ['Before Sunrise', 'Crazy, Stupid, Love'],
+  3: ['Amélie', 'Notting Hill'], 4: ['Notting Hill', 'The Princess Bride'],
+  5: ['La La Land', 'Mamma Mia!'], 6: ['Mamma Mia!', 'Jaws'], 7: ['Jaws', 'Dirty Dancing'],
+  8: ['Dirty Dancing', 'La La Land'], 9: ['The Princess Bride', 'When Harry Met Sally'],
+  10: ['Hocus Pocus', 'Practical Magic'], 11: ['When Harry Met Sally', 'Knives Out'],
+  12: ['Home Alone', 'Elf', 'The Holiday'],
 };
 
 /* Kinds that should exist as a listing, so a miss means something. A walk
  * described as "the waterfront" is not a listing and flagging it would cry
  * wolf on every plan. */
 const VERIFIABLE = new Set(['food', 'drinks', 'coffee', 'music', 'show', 'activity', 'shopping']);
-const PHOTO_KINDS = new Set(['activity', 'show', 'music', 'viewpoint']);
+const PHOTO_KINDS = new Set(['activity', 'show', 'music', 'viewpoint', 'outdoors']);
 
 /* Written to sound like someone who has been there. The alternative - "a
  * specialist coffee bar in a walkable part of town" - is what this said
@@ -113,7 +151,30 @@ const COPY = {
              'Cheap, warm, and full of things to have an opinion about.'],
   food: ['Dinner, and the only stop worth booking ahead.',
          'The anchor. Everything before this was warm-up.'],
+  treat: ['Somewhere small and local. Ask what they would take home tonight, and taste before you buy.',
+          'A local shop worth the detour - the kind of place that knows its regulars by name.'],
+  takeout: ['Dinner from somewhere the neighbourhood actually eats. Call ahead so it is hot when you get there.',
+            'Pick up dinner on the way home. Order one thing neither of you has tried.'],
+  sled: ['Sledding, while there is still light. Race to the bottom; the loser buys the treats.',
+         'Bring a sled, or a bin bag if you must. Nobody stays cool on the way down.'],
+  hill: ['Up the hill for the last of the light. Free, and the view does the talking.',
+         'A short climb to somewhere with a view, timed for the sunset.'],
+  nature: ['A walk in the woods before dinner, phones away. It is better than it sounds.',
+           'Somewhere green and quiet to walk and actually talk.'],
+  rink: ['Skating. Holding hands is structurally necessary here.',
+         'An hour on the ice. Someone will fall over; it will be the best part.'],
+  plunge: ['The cold plunge: in to the shoulders, a count of sixty, out. Together, never alone, with dry clothes laid out before you go in.',
+           'Two minutes in cold water at most, feet first, then straight to somewhere warm. You will talk about it for years.'],
+  swim: ['A swim before dinner. Stay where other people swim, and check for posted closures.',
+         'In the water while it is still light. Swim where others do, and never alone.'],
 };
+
+COPY.sweet = ['Ice cream, eaten on the walk to dinner. Get two flavours and swap halfway.',
+              'Something cold and sweet while your hair dries.'];
+
+/* After cold water, the next stop is not "coffee", it is rescue. */
+const WARM_UP = ['Hot drinks, fast. You have earned them.',
+                 'Warm up here: the hottest thing on the menu and a seat by the heater.'];
 
 /* The opener's lines say "start here", and respectHours moves the opener
  * behind anything that shuts early - which printed "Start here" on stop two,
@@ -148,9 +209,34 @@ export const walkTime = s => !s.distanceM ? ''
 export function slotsFor(prefs, weather) {
   const said = (prefs.interests || []).join(' ').toLowerCase();
   const wants = (...w) => w.some(x => said.includes(x));
+  const level = Math.min(5, Math.max(1, Math.round(Number(prefs.adventure) || 2)));
+  const month = Number(String(prefs.date || '').slice(5, 7)) || (new Date().getMonth() + 1);
+  const winter = [12, 1, 2].includes(month);
+  const snowy = /snow/i.test(weather?.summary || '')
+    || (winter && weather?.highC != null && weather.highC <= 2);
+  const warm = weather?.highC != null ? weather.highC >= 22 : [6, 7, 8].includes(month);
+  const stormy = /thunder/i.test(weather?.summary || '');
+
+  // A night in: something good from a local shop, dinner picked up on the
+  // way, then home.
+  if (level === 1) return ['treat', 'takeout', 'home'];
+
+  // Outside first, in daylight - build() moves the start earlier to fit -
+  // then somewhere local to warm up, then dinner. Concord in January:
+  // Nashawtuc Hill, The Cheese Shop, dinner.
+  if (level === 4 && !stormy) {
+    let out = snowy ? 'sled' : wants('hike', 'walk', 'nature', 'woods', 'forest') ? 'nature' : 'hill';
+    if (wants('skat', 'ice')) out = 'rink';
+    else if (wx.isWet(weather) && !snowy) out = winter ? 'rink' : 'activity';
+    return [out, 'treat', 'food'];
+  }
+  if (level === 5 && !stormy) return warm ? ['swim', 'sweet', 'food'] : ['plunge', 'coffee', 'food'];
 
   let anchor;
   if (wants('aquarium', 'fish', 'animal', 'zoo')) anchor = 'aquarium';
+  else if (wants('skat')) anchor = 'rink';
+  else if (wants('sled') && snowy) anchor = 'sled';
+  else if (wants('hike', 'hiking', 'nature', 'woods') && !wx.isWet(weather)) anchor = 'nature';
   else if (wants('music', 'jazz', 'gig', 'band', 'live')) anchor = 'music';
   else if (wants('film', 'cinema', 'movie', 'theatre', 'theater', 'comedy')) anchor = 'show';
   else if (wants('art', 'museum', 'history', 'gallery', 'exhibition')) anchor = 'activity';
@@ -159,7 +245,9 @@ export function slotsFor(prefs, weather) {
   else anchor = 'viewpoint';
 
   const early = (mins(prefs.startTime) ?? 17 * 60) < 17 * 60;
-  const opener = (prefs.stage === 'first_date' && early) ? 'coffee' : 'drinks';
+  let opener = (prefs.stage === 'first_date' && early) ? 'coffee' : 'drinks';
+  // Curious: open somewhere you would not have found on your own.
+  if (level === 3 || wants('cheese', 'chocolate', 'bakery', 'dessert')) opener = 'treat';
 
   const slots = [opener, anchor, 'food'];
   // A closer, for the stages where the night can run on. It is a nightcap,
@@ -178,6 +266,7 @@ export function slotsFor(prefs, weather) {
  *  community.js. Optional: without it this is the plain map-data planner. */
 export async function build(prefs, weather, onPhase = () => {}, locals = null) {
   const stage = STAGES[prefs.stage] || STAGES.getting_to_know;
+  weekday = prefs.date ? new Date(prefs.date + 'T12:00').getDay() : null;
   const slots = slotsFor(prefs, weather);
   const known = new Map((locals?.picks || []).map(p => [p.name.toLowerCase(), p]));
 
@@ -187,6 +276,19 @@ export async function build(prefs, weather, onPhase = () => {}, locals = null) {
     const idx = slots.indexOf('viewpoint');
     const light = gh.start - (slots.length - idx - 1) * 70;
     t = Math.max(t, Math.min(t + 90, light));
+  }
+  // An adventure that starts outside starts in daylight. A 17:00 start in
+  // January puts the sledding in the dark, so the evening moves earlier -
+  // never before noon - and the plan says why.
+  let timing = '';
+  const firstOut = AS_KIND[slots[0]] === 'outdoors';
+  if (firstOut && weather?.sunset) {
+    const lit = Math.max(12 * 60, weather.sunset - SHAPE[slots[0]][0] - 10);
+    if (lit < t) {
+      timing = `Starts at ${hhmm(lit)} rather than ${hhmm(t)}, so you are outside while it is `
+             + `light - sunset is ${hhmm(weather.sunset)}.`;
+      t = lit;
+    }
   }
 
   onPhase('Looking for places near you');
@@ -207,12 +309,17 @@ export async function build(prefs, weather, onPhase = () => {}, locals = null) {
     // only has to be open for half an hour after the evening starts. Dinner
     // always ends the night, so it has to stay open to the end of it.
     const needUntil = slot === 'food' ? t + minutes : opening + 30;
-    const hits = await nearby(slot, prefs.lat, prefs.lon, prefs.transport, 6);
-    const venue = pick(withLocals(hits, slot, locals, prefs), used, { from, needUntil, known });
-    if (venue) from = venue;
+    let venue = null;
+    if (slot !== 'home') {
+      const hits = await nearby(slot, prefs.lat, prefs.lon, prefs.transport, 6);
+      venue = pick(withLocals(hits, slot, locals, prefs), used,
+                   { from, needUntil, known, localOnly: prefs.localOnly });
+      if (venue) from = venue;
+    }
 
-    const stop = venue ? realStop(slot, venue, prefs, t, minutes, cost, last)
-                       : placeholder(slot, prefs, t, minutes, cost, last);
+    const stop = slot === 'home' ? homeStop(prefs, t, minutes)
+      : venue ? realStop(slot, venue, prefs, t, minutes, cost, last)
+      : placeholder(slot, prefs, t, minutes, cost, last);
     const said = venue && known.get(venue.name.toLowerCase());
     if (said) stop.locals = { posts: said.posts, loves: said.loves, notes: said.notes.slice(0, 2) };
     // An unfillable slot produces the same sentence every time, so two of
@@ -228,10 +335,12 @@ export async function build(prefs, weather, onPhase = () => {}, locals = null) {
     t += minutes + (last ? 0 : 12);
   }
 
-  respectHours(stops);
+  // Daylight is a closing time too, for anything outside.
+  const sunset = weather?.sunset ?? null;
+  respectHours(stops, sunset);
   legs(stops, prefs.transport);
   fitWindow(stops, Math.min(stage.maxHours, prefs.hours), prefs.transport, keep);
-  closeOnTime(stops);
+  closeOnTime(stops, sunset);
   retell(stops);
 
   onPhase('Finding a photograph');
@@ -244,12 +353,16 @@ export async function build(prefs, weather, onPhase = () => {}, locals = null) {
 
   const total = stops.reduce((a, s) => a + s.cost, 0);
   const named = stops.filter(s => s.verified).map(s => s.name);
-  const anchorStop = stops.find(s => ['activity', 'music', 'show'].includes(s.kind) && s.verified);
+  const anchorStop = stops.find(s => ['activity', 'music', 'show', 'outdoors'].includes(s.kind) && s.verified);
   const where = (prefs.location || '').split(',')[0];
+  const home = stops.some(s => s.kind === 'home');
 
   const plan = {
-    title: anchorStop ? `${anchorStop.name}, and either side of it`
-                      : `An evening around ${where}`,
+    title: home ? 'A night in, done properly'
+         : anchorStop ? `${anchorStop.name}, and either side of it`
+         : `An evening around ${where}`,
+    adventure: ADVENTURE[Math.min(5, Math.max(1, Math.round(Number(prefs.adventure) || 2)))][0],
+    timing,
     pitch: named.length >= 2
       ? `${named[0]}, then ${named[1]}${named[2] ? `, then ${named[2]}` : ''}`
         + ` - about ${prefs.currency} ${Math.round(total)} for two.`
@@ -258,7 +371,7 @@ export async function build(prefs, weather, onPhase = () => {}, locals = null) {
     totalCost: Math.round(total * 100) / 100,
     transportNote: transportNote(prefs, stops),
     weatherCall: weatherNote(weather, stops),
-    wear: wear(prefs, weather),
+    wear: wear(prefs, weather, slots),
     backup: `${named[0] || where} is the one to check before you leave - opening hours `
           + `move, and everything else here is close enough to swap at short notice.`,
     // Real People's Insights: the best-loved evenings locals shared near here,
@@ -280,11 +393,17 @@ export async function build(prefs, weather, onPhase = () => {}, locals = null) {
  *  museum that closes at four and a lunch counter that closes at five. Then
  *  published hours - a decent proxy for a place someone maintains - and then
  *  the nearest to the last stop, so the evening is a route, not a scatter. */
-export function pick(candidates, used, { from = null, needUntil = null, known = null } = {}) {
-  const shut = c => closesAt(c.openingHours);
+export function pick(candidates, used,
+                     { from = null, needUntil = null, known = null, localOnly = false } = {}) {
+  const shut = c => closes(c.openingHours);
   const fresh = candidates.filter(c => !used.has(c.name.toLowerCase()))
-    .filter(c => needUntil == null || shut(c) == null || shut(c) >= needUntil);
+    .filter(c => needUntil == null || shut(c) == null || shut(c) >= needUntil)
+    // "Only local, independent places" means it: no chains at all.
+    .filter(c => !localOnly || !isChain(c.name));
   if (!fresh.length) return null;
+  // Even without that switch, an independent beats a chain: a date at the
+  // Starbucks you pass every morning is not a plan.
+  const chain = c => (isChain(c.name) ? 1 : 0);
   const away = c => (from && c.lat != null) ? distanceKm(c.lat, c.lon, from.lat, from.lon) : 0;
   // Somewhere locals shared and loved beats anything the map search can
   // infer from tags - that is the whole point of asking them.
@@ -294,6 +413,7 @@ export function pick(candidates, used, { from = null, needUntil = null, known = 
   };
   return fresh.sort((a, b) =>
     (liked(b) - liked(a))
+    || (chain(a) - chain(b))
     || ((a.openingHours ? 0 : 1) - (b.openingHours ? 0 : 1))
     || (away(a) - away(b)))[0];
 }
@@ -302,10 +422,12 @@ export function pick(candidates, used, { from = null, needUntil = null, known = 
  *  stop, so the planner can route to one the search never returned. Only
  *  shared places with coordinates, and only within reach. */
 export function withLocals(hits, slot, locals, prefs) {
-  const reach = RADIUS_KM[prefs.transport] ?? 8;
+  const outside = AS_KIND[slot] === 'outdoors';
+  const reach = Math.max(RADIUS_KM[prefs.transport] ?? 8, outside ? 12 : 0);
+  const want = COMMUNITY_KIND[slot] || slot;
   const have = new Set(hits.map(h => h.name.toLowerCase()));
   const extra = (locals?.picks || [])
-    .filter(p => p.kind === slot && p.lat != null && !have.has(p.name.toLowerCase())
+    .filter(p => p.kind === want && p.lat != null && !have.has(p.name.toLowerCase())
       && prefs.lat != null && distanceKm(p.lat, p.lon, prefs.lat, prefs.lon) <= reach)
     .map(p => ({ name: p.name, lat: p.lat, lon: p.lon, kind: LOCAL_KIND[slot] || 'Local pick',
                  cuisine: '', openingHours: '', website: '', address: '' }));
@@ -320,12 +442,15 @@ function realStop(slot, v, prefs, t, minutes, cost, last) {
   // repeating it reads like a database dump.
   if (v.cuisine) why += ` Expect ${v.cuisine.split(',')[0].trim()}.`;
 
-  const outdoors = kind === 'viewpoint';
+  const outdoors = OUTSIDE.has(kind);
+  // "Main Beach" is somewhere; "Main Beach, Walden Pond" is somewhere you can find.
+  if (outdoors && v.within && !v.name.includes(v.within)) why = `At ${v.within}. ${why}`;
   return {
-    name: v.name, kind, start: hhmm(t), minutes, cost, why,
+    slot, name: v.name, kind, start: hhmm(t), minutes, cost, why,
     travelNext: last ? '' : 'A few minutes on foot.',
     travelMinutes: last ? 0 : 12,
-    booking: kind === 'food' ? 'Worth booking - it is the busiest stop of the night.'
+    booking: slot === 'takeout' ? 'Call ahead to order for pick-up.'
+           : kind === 'food' ? 'Worth booking - it is the busiest stop of the night.'
            : v.openingHours ? 'Check the hours before you set off.' : '',
     dressCode: kind === 'food' ? prefs.style : 'casual',
     indoor: !outdoors,
@@ -344,9 +469,12 @@ function placeholder(slot, prefs, t, minutes, cost, last) {
   const what = { drinks: 'a bar', coffee: 'a coffee place', food: 'somewhere to eat',
     music: 'somewhere with live music', show: 'a cinema or theatre',
     activity: 'a museum or gallery', aquarium: 'an aquarium',
-    viewpoint: 'high ground or a park', shopping: 'a market' }[slot] || 'somewhere';
+    viewpoint: 'high ground or a park', shopping: 'a market',
+    treat: 'a local cheese shop or bakery', sweet: 'an ice cream shop', takeout: 'somewhere local for takeaway',
+    sled: 'a hill to sled down', hill: 'a hill with a view', nature: 'woods to walk in',
+    rink: 'an ice rink', plunge: 'a pond or beach', swim: 'somewhere to swim' }[slot] || 'somewhere';
   const kind = AS_KIND[slot] || 'activity';
-  const outdoors = kind === 'viewpoint';
+  const outdoors = OUTSIDE.has(kind);
   const where = (prefs.location || '').split(',')[0];
   return {
     name: `${what[0].toUpperCase()}${what.slice(1)} near ${where}`,
@@ -363,6 +491,22 @@ function placeholder(slot, prefs, t, minutes, cost, last) {
   };
 }
 
+/** The last stop of a night in: your own sofa. */
+function homeStop(prefs, t, minutes) {
+  const month = Number(String(prefs.date || '').slice(5, 7)) || (new Date().getMonth() + 1);
+  const films = FILMS[month] || FILMS[12];
+  const film = films[Math.abs(hash(String(prefs.date || ''))) % films.length];
+  return {
+    name: 'Home', kind: 'home', start: hhmm(t), minutes, cost: 0,
+    why: `Blankets, the good snacks, phones in another room, and ${film}.`,
+    tip: 'Set the film up before you leave, so nobody spends twenty minutes scrolling.',
+    travelNext: '', travelMinutes: 0, booking: '', dressCode: 'casual', indoor: true,
+    fallback: '', lookedUp: false, verified: false,
+    lat: null, lon: null, address: '', venueKind: 'Night in', cuisine: '',
+    openingHours: '', website: '', distanceM: 0, photo: '', blurb: '', photoCredit: '',
+  };
+}
+
 /** Put whatever closes first, first.
  *
  *  Museums and aquariums shut at six while bars run late, so the obvious arc
@@ -370,13 +514,15 @@ function placeholder(slot, prefs, t, minutes, cost, last) {
  *  doors close. The first Boston plan did precisely that: 18:02 to 19:17,
  *  closing time 18:00. Dinner stays last regardless; nobody wants an evening
  *  reordered into eating at six and a museum at nine. */
-export function respectHours(stops) {
+export function respectHours(stops, sunset = null) {
   if (stops.length < 2) return;
-  const shuts = s => closesAt(s.openingHours) ?? 24 * 60;
+  const shuts = s => shutsAt(s, sunset) ?? 24 * 60;
   if (stops.every(s => shuts(s) === 24 * 60)) return;
 
-  const tail = stops.filter(s => s.kind === 'food');
-  const head = stops.filter(s => s.kind !== 'food').sort((a, b) => shuts(a) - shuts(b));
+  // Home is always last, after dinner has been picked up.
+  const end = s => s.kind === 'food' || s.kind === 'home';
+  const tail = [...stops.filter(s => s.kind === 'food'), ...stops.filter(s => s.kind === 'home')];
+  const head = stops.filter(s => !end(s)).sort((a, b) => shuts(a) - shuts(b));
   const next = [...head, ...tail];
   if (next.map(s => s.name).join('|') === stops.map(s => s.name).join('|')) return;
 
@@ -391,6 +537,14 @@ export function respectHours(stops) {
     s.travelNext = last ? '' : (s.travelNext || 'A few minutes on foot.');
   });
   reflow(stops);
+}
+
+/** When a stop stops being any good: its closing time, or for anything
+ *  outside, sunset. A hill in the dark is closed in every way that matters. */
+function shutsAt(s, sunset) {
+  const shut = closes(s.openingHours);
+  if (OUTSIDE.has(s.kind) && sunset != null) return shut == null ? sunset : Math.min(shut, sunset);
+  return shut;
 }
 
 function reflow(stops) {
@@ -422,7 +576,16 @@ export function legs(stops, transport) {
   stops.forEach((s, i) => {
     const next = stops[i + 1];
     if (!next) { s.travelNext = ''; s.travelMinutes = 0; return; }
-    const hop = leg(s, next, transport);
+    if (next.kind === 'home') { s.travelNext = 'Then home with it.'; s.travelMinutes = 15; return; }
+    // A walking evening still drives to the hill or the pond - they are
+    // rarely a walk from the restaurants - rather than hiking an hour to it.
+    const toOutside = OUTSIDE.has(s.kind) || OUTSIDE.has(next.kind);
+    let hop = leg(s, next, transport);
+    s.drive = false;
+    if (hop && toOutside && transport === 'walking' && hop.minutes > HOP_LIMIT.walking) {
+      hop = leg(s, next, 'car');
+      s.drive = true;
+    }
     if (hop) { s.travelNext = hop.text; s.travelMinutes = hop.minutes; return; }
     s.travelNext = s.travelNext || 'A few minutes on foot.';
     s.travelMinutes = s.travelMinutes || 12;
@@ -438,9 +601,9 @@ export function legs(stops, transport) {
  *  Run it after fitWindow, not before. Before, a Lisbon dinner was cut to 75
  *  minutes because a jazz bar ahead of it made it late - and then the jazz
  *  bar was trimmed from the evening and dinner kept the cut. */
-export function closeOnTime(stops) {
+export function closeOnTime(stops, sunset = null) {
   for (const s of stops) {
-    const shut = closesAt(s.openingHours), start = mins(s.start);
+    const shut = shutsAt(s, sunset), start = mins(s.start);
     if (shut == null || start == null) continue;
     const room = shut - start;
     if (room < s.minutes && room >= 30) { s.minutes = room; reflow(stops); }
@@ -488,7 +651,7 @@ export function fitWindow(stops, maxHours, transport, keep = null) {
     // with no dinner in it at all. Cut the last stop that is not food, and
     // not the anchor either: a Chicago evening asked for art galleries lost
     // the gallery and kept the bar in front of it.
-    const cuttable = n => stops[n].kind !== 'food' && stops[n].name !== keep;
+    const cuttable = n => !['food', 'home'].includes(stops[n].kind) && stops[n].name !== keep;
     let i = -1;
     for (let n = stops.length - 1; n > 0; n--) {
       if (cuttable(n)) { i = n; break; }
@@ -496,7 +659,7 @@ export function fitWindow(stops, maxHours, transport, keep = null) {
     if (i < 0 && cuttable(0)) i = 0;       // only the opener is left to give
     if (i < 0) {
       for (let n = stops.length - 1; n > 0; n--) {
-        if (stops[n].kind !== 'food') { i = n; break; }
+        if (!['food', 'home'].includes(stops[n].kind)) { i = n; break; }
       }
     }
     if (i < 0) i = stops.length - 1;       // nothing but food: cut the tail
@@ -524,7 +687,8 @@ export function fitWindow(stops, maxHours, transport, keep = null) {
 function retell(stops) {
   stops.forEach((s, i) => {
     if (i === 0 || !s.verified || !LATER[s.kind]) return;
-    const lines = (s.kind === 'drinks' && i === stops.length - 1) ? NIGHTCAP : LATER[s.kind];
+    const lines = (s.kind === 'coffee' && stops[i - 1].slot === 'plunge') ? WARM_UP
+      : (s.kind === 'drinks' && i === stops.length - 1) ? NIGHTCAP : LATER[s.kind];
     s.why = lines[Math.abs(hash(s.name)) % lines.length]
           + (s.cuisine ? ` Expect ${s.cuisine.split(',')[0].trim()}.` : '');
   });
@@ -564,7 +728,7 @@ export function check(plan, prefs, weather) {
       out.push(`'${s.name}' starts at ${s.start}, before the previous stop finishes.`);
     }
     const travel = i < stops.length - 1 ? s.travelMinutes : 0;
-    if (travel > hop) {
+    if (travel > (s.drive ? HOP_LIMIT.car : hop)) {
       out.push(`${travel} min from '${s.name}' to the next stop is a long hop by ${prefs.transport}.`);
     }
     prevEnd = start + s.minutes + travel;
@@ -589,7 +753,7 @@ export function check(plan, prefs, weather) {
     if (s.lookedUp && !s.verified && VERIFIABLE.has(s.kind)) {
       out.push(`'${s.name}' could not be found in map data - check it exists.`);
     }
-    const shut = closesAt(s.openingHours);
+    const shut = closes(s.openingHours);
     const ends = mins(endOf(s));
     if (shut != null && ends != null && ends > shut) {
       out.push(`'${s.name}' closes at ${hhmm(shut)}, and this has you there until `
@@ -601,13 +765,19 @@ export function check(plan, prefs, weather) {
   // plan, and the cheapest to catch.
   if (weather?.sunset != null) {
     for (const s of stops) {
-      if (s.kind !== 'viewpoint') continue;
+      if (!OUTSIDE.has(s.kind)) continue;
       const start = mins(s.start);
       if (start == null) continue;
       if (start > weather.sunset) {
         out.push(`'${s.name}' starts after sunset (${hhmm(weather.sunset)}). Move it earlier.`);
       }
     }
+  }
+
+  // Cold water is the one stop here that can genuinely hurt someone.
+  if (stops.some(s => s.slot === 'plunge')) {
+    out.push('Cold water: never alone, in and out within two minutes, and not at all with a heart '
+           + 'condition or after drinking. Only go in where others do, never on or under ice.');
   }
   return out;
 }
@@ -632,7 +802,18 @@ function weatherNote(weather, stops) {
        + `the morning of and use the fallback if it turns.`;
 }
 
-function wear(prefs, weather) {
+function wear(prefs, weather, slots = []) {
+  // The adventurous evenings need kit more than a dress code.
+  if (slots.includes('home')) return 'Whatever is softest. This one is at home.';
+  if (slots.includes('plunge')) {
+    return 'Swimsuit under your clothes, a big towel each, a warm hat, and dry layers '
+         + 'you can pull on fast. Water shoes if you have them.';
+  }
+  if (slots.includes('swim')) return 'Swimsuit under your clothes, a towel, and something dry for dinner.';
+  if (slots.includes('sled')) return 'Waterproof boots and gloves, a hat, and a sled. Dinner will forgive the hat hair.';
+  if (slots.some(s => ['hill', 'nature'].includes(s))) {
+    return 'Shoes with grip for the hill, and a layer for when the sun goes. Smart enough after for dinner.';
+  }
   const base = String(prefs.style || '').replace(/_/g, ' ');
   const shoes = ['walking', 'transit'].includes(prefs.transport)
     ? 'shoes you can walk twenty minutes in' : 'something comfortable';

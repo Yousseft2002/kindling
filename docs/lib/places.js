@@ -61,7 +61,59 @@ export const SLOT_WORDS = {
   aquarium: ['aquarium', 'zoo'],
   viewpoint: ['viewpoint', 'park'],
   shopping: ['marketplace', 'bookshop'],
+  // The adventure levels. Same measuring as above, around Concord MA: "peak"
+  // finds Nashawtuc Hill, "beach" finds Walden Pond's two beaches, "cheese"
+  // finds The Cheese Shop. "pond", "trail", "sledding" and "brewery" find
+  // nothing at all, so they are not asked.
+  treat: ['cheese', 'chocolate', 'bakery'],
+  sweet: ['ice cream', 'bakery'],
+  takeout: ['restaurant', 'bistro'],
+  sled: ['peak'],
+  hill: ['peak', 'viewpoint'],
+  nature: ['nature reserve', 'park'],
+  rink: ['ice rink'],
+  plunge: ['beach'],
+  swim: ['beach'],
 };
+
+/* Stops you drive or cycle to on purpose. A hill or a pond is rarely inside
+ * the few streets a walking evening covers, and nobody minds a short drive to
+ * the start of the fun. */
+const OUTDOORS = new Set(['sled', 'hill', 'nature', 'plunge', 'swim']);
+const OUTDOOR_BOX = 0.07;
+
+/* Chains, by name. OpenStreetMap tags them with `brand`, but Nominatim does
+ * not return that tag, so the only signal left is the name: Dunkin' came back
+ * from Concord untagged. Not exhaustive - it is the chains that actually turn
+ * up in date searches - and matched on the start of the name, so "Dunkin'
+ * Donuts" and "Starbucks Reserve" count. */
+const CHAINS = [
+  'starbucks', 'dunkin', 'mcdonalds', 'subway', 'chipotle', 'panera', 'olive garden',
+  'applebees', 'chilis', 'tgi fridays', 'cheesecake factory', 'pf changs', 'outback steakhouse',
+  'red lobster', 'buffalo wild wings', 'five guys', 'shake shack', 'sweetgreen', 'cava',
+  'dominos', 'pizza hut', 'papa johns', 'burger king', 'wendys', 'taco bell', 'kfc', 'popeyes',
+  'panda express', 'ihop', 'dennys', 'cracker barrel', 'texas roadhouse', 'longhorn steakhouse',
+  'bjs restaurant', 'yard house', 'dave and busters', 'dave busters', 'hard rock cafe',
+  'legal sea foods', 'ruths chris', 'the capital grille', 'capital grille', 'mortons',
+  'flemings', 'smith and wollensky', 'bonefish grill', 'carrabbas', 'maggianos',
+  'california pizza kitchen', 'uno pizzeria', 'pizzeria uno', 'bertuccis', 'the 99',
+  'friendlys', 'jersey mikes', 'jimmy johns', 'wingstop', 'raising canes', 'chick fil a',
+  'in n out', 'whataburger', 'sonic drive in', 'arbys', 'dairy queen', 'cold stone',
+  'baskin robbins', 'ben and jerrys', 'krispy kreme', 'insomnia cookies', 'tim hortons',
+  'peets coffee', 'caribou coffee', 'costa coffee', 'caffe nero', 'pret a manger', 'pret',
+  'nandos', 'wagamama', 'pizza express', 'zizzi', 'prezzo', 'bella italia', 'franco manca',
+  'honest burgers', 'byron', 'gourmet burger kitchen', 'all bar one', 'slug and lettuce',
+  'browns', 'jd wetherspoon', 'wetherspoon', 'greggs', 'leon', 'itsu', 'wasabi', 'yo sushi',
+  'vapiano', 'telepizza', 'amc', 'regal', 'cinemark', 'odeon', 'vue', 'cineworld',
+  'barnes and noble', 'whole foods', 'trader joes', 'total wine', 'bevmo', 'walmart', 'target',
+  '7 eleven', 'cvs', 'walgreens',
+];
+const chainKey = s => fold(s).replace(/&/g, ' and ').replace(/['’.]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+
+export function isChain(name) {
+  const n = chainKey(name);
+  return CHAINS.some(c => n === c || n.startsWith(c + ' '));
+}
 
 /* Last resort for the music slot, matched against bar names. Deliberately
  * not the bare word "music": that returns Music Hall Place and Music Oval -
@@ -89,13 +141,41 @@ export function label(kind) {
  *    "Tu 17:00-02:00, We-Mo 12:00-02:00"    -> 02:00, i.e. open late
  *  A result before noon means it shuts after midnight, which no evening is
  *  going to hit, so that is reported as no limit. */
-export function closesAt(hours) {
+export function closesAt(hours, weekday = null) {
   if (!hours) return null;
-  const found = [...String(hours).matchAll(/\b([0-2]?\d):([0-5]\d)\b/g)];
+  let text = String(hours);
+  // Given the day of the evening (0 = Sunday), read that day's rule. The last
+  // time in the whole string was the Sunday close: The Cheese Shop in Concord,
+  // "Tu-Sa 10:00-17:30; Su 12:00-17:00", read as shutting at five on a
+  // Saturday. Later rules override earlier ones, as in OSM. A day no rule
+  // covers is a day it is shut, reported as 0 so nothing can be booked there.
+  if (weekday != null && DAY_RE.test(text)) {
+    let rule = null;
+    for (const part of text.split(';')) {
+      const m = part.trim().match(RULE_RE);
+      if (m && covers(m[1], weekday)) rule = m[2];
+    }
+    if (rule == null || /\b(off|closed)\b/i.test(rule)) return 0;
+    text = rule;
+  }
+  const found = [...text.matchAll(/\b([0-2]?\d):([0-5]\d)\b/g)];
   if (!found.length) return null;
   const [, h, m] = found[found.length - 1];
   const mins = (+h) * 60 + (+m);
   return mins < 12 * 60 ? null : mins;
+}
+
+const DAYS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
+const DAY_RE = /\b(Mo|Tu|We|Th|Fr|Sa|Su)\b/;
+const RULE_RE = /^((?:(?:Mo|Tu|We|Th|Fr|Sa|Su)(?:-(?:Mo|Tu|We|Th|Fr|Sa|Su))?\s*,?\s*)+)\s+(.+)$/;
+
+/** Does "Mo-Fr", "Sa,Su" or "Fr-Mo" include this day? */
+function covers(spec, weekday) {
+  return spec.split(',').map(s => s.trim()).filter(Boolean).some(s => {
+    const [a, b] = s.split('-').map(d => DAYS.indexOf(d.trim()));
+    if (b == null || b < 0) return a === weekday;
+    return a <= b ? weekday >= a && weekday <= b : weekday >= a || weekday <= b;
+  });
 }
 
 function usable(r) {
@@ -110,7 +190,12 @@ function toVenue(r) {
   const ex = r.extratags || {}, ad = r.address || {};
   const street = [ad.house_number, ad.road].filter(Boolean).join(' ');
   const town = ad.city || ad.town || ad.village || ad.suburb || '';
+  // What a place sits inside. "Main Beach" means nothing on its own; "Main
+  // Beach, Walden Pond State Reservation" is somewhere you can drive to.
+  const inside = String(r.display_name || '').split(',')[1]?.trim() || '';
+  const within = inside && inside !== town && !/^\d/.test(inside) && inside !== ad.road ? inside : '';
   return {
+    within,
     name: r.name || String(r.display_name || '').split(',')[0],
     lat, lon,
     kind: label(r.type),
@@ -118,11 +203,11 @@ function toVenue(r) {
     openingHours: ex.opening_hours || '',
     liveMusic: ex.live_music === 'yes',
     website: ex.website || ex['contact:website'] || '',
-    address: [street, town].filter(Boolean).join(', '),
+    address: [street || within, town].filter(Boolean).join(', '),
   };
 }
 
-const box = t => BOX[t] ?? DEFAULT_BOX;
+const box = (t, slot) => Math.max(BOX[t] ?? DEFAULT_BOX, OUTDOORS.has(slot) ? OUTDOOR_BOX : 0);
 const viewbox = (lat, lon, b) => `${lon - b},${lat + b},${lon + b},${lat - b}`;
 
 /** Free text -> candidate places, for the autocomplete. Open-Meteo's geocoder,
@@ -205,8 +290,8 @@ export function nearby(slot, lat, lon, transport = 'walking', limit = 6) {
   if (lat == null || lon == null) return Promise.resolve([]);
   const key = `near:${slot}:${lat.toFixed(3)}:${lon.toFixed(3)}:${transport}`;
   return memo(key, DAY, async () => {
-    const b = box(transport);
-    for (const word of (SLOT_WORDS[slot] || [slot]).slice(0, 2)) {
+    const b = box(transport, slot);
+    for (const word of (SLOT_WORDS[slot] || [slot]).slice(0, 3)) {
       const d = await nominatim(SEARCH, {
         q: word, format: 'jsonv2', limit: limit * 2,
         addressdetails: 1, extratags: 1,

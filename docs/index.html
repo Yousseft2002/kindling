@@ -367,6 +367,19 @@
   .foot a{color:inherit}
   .err{border-color:var(--warn-line);background:var(--warn-bg);color:var(--warn-ink);font-size:17px}
 
+  /* ---- adventure ---- */
+  .adv-name{font-family:var(--serif);font-size:clamp(36px,10vw,54px);font-weight:600;
+            letter-spacing:-.02em;line-height:1;margin:4px 0 8px}
+  .adv-say{color:var(--muted);font-size:16px;min-height:3.1em;margin:0 0 6px}
+  .adv-scale{display:flex;justify-content:space-between;font-size:12.5px;color:var(--faint);
+             letter-spacing:.1em;text-transform:uppercase;font-weight:600;margin-top:2px}
+  .check{display:flex;gap:14px;align-items:flex-start;margin-top:22px;padding:14px 16px;
+         min-height:44px;border:1.5px solid var(--line);border-radius:16px;background:var(--card);cursor:pointer}
+  .check:has(input:checked){border-color:var(--accent);box-shadow:0 0 0 4px var(--accent-soft)}
+  .check input{width:22px;height:22px;flex:none;margin:2px 0 0;padding:0;accent-color:var(--accent)}
+  .check b{display:block;font-weight:600;font-size:16px}
+  .check span{font-size:14.5px;color:var(--muted);line-height:1.45}
+
   /* ---- tabs ---- */
   /* Two places to be: planning an evening, and reading what locals did with
      theirs. Hidden entirely until a community backend is configured. */
@@ -621,7 +634,25 @@
       <input type="hidden" id="transportation" name="transportation" value="walking">
     </section>
 
-    <!-- 7 --- interests ------------------------------------------------ -->
+    <!-- 7 --- adventure ------------------------------------------------ -->
+    <section class="screen" data-step>
+      <p class="eyebrow">Adventure</p>
+      <h1>How brave are you two feeling?</h1>
+      <p class="say">From a blanket and a film to a cold plunge in the nearest pond.</p>
+      <div>
+        <div class="adv-name" id="adv_name">Easy</div>
+        <p class="adv-say" id="adv_say"></p>
+        <input id="adventure" name="adventure" type="range" min="1" max="5" step="1" value="2"
+               aria-label="How adventurous" aria-describedby="adv_say">
+        <div class="adv-scale" aria-hidden="true"><span>Stay in</span><span>Wild</span></div>
+        <label class="check" for="local_only">
+          <input type="checkbox" id="local_only" name="local_only" value="1">
+          <span><b>Only local, independent places</b>Family-owned and one-off spots. No chains.</span>
+        </label>
+      </div>
+    </section>
+
+    <!-- 8 --- interests ------------------------------------------------ -->
     <section class="screen" data-step data-optional>
       <p class="eyebrow">Interests</p>
       <h1>What do you two actually like?</h1>

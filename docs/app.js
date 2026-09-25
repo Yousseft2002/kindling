@@ -1,7 +1,7 @@
 import * as places from './lib/places.js';
 import * as wx from './lib/weather.js';
 import * as community from './lib/community.js';
-import { build, STAGES, STYLES, TRANSPORT, walkTime, endOf } from './lib/plan.js';
+import { build, STAGES, STYLES, TRANSPORT, ADVENTURE, walkTime, endOf } from './lib/plan.js';
 import { initCommunity, openCommunity } from './community-tab.js';
 
 const $ = s => document.querySelector(s);
@@ -195,8 +195,8 @@ for (const [field, entries] of Object.entries({
 measure();
 
 /* ---- interest chips -------------------------------------------------- */
-const SUGGESTIONS = ['aquarium','jazz','photography','natural wine','film','live music',
-  'markets','art galleries','bookshops','coffee','cocktails','vintage','architecture'];
+const SUGGESTIONS = ['aquarium','jazz','cheese','hiking','sledding','skating','film','live music',
+  'markets','art galleries','bookshops','chocolate','cocktails','vintage','natural wine'];
 const chipFor = {};
 for (const s of SUGGESTIONS) {
   const el = document.createElement('span');
@@ -329,6 +329,8 @@ function readForm() {
     hours: parseFloat(f.hours) || 5,
     note: f.party_note || '',
     weatherText: (f.weather || '').trim(),
+    adventure: parseInt(f.adventure, 10) || 2,
+    localOnly: f.local_only === '1',
   };
 }
 
@@ -449,7 +451,8 @@ function show(d) {
   const when = prefs.date
     ? new Date(prefs.date + 'T12:00').toLocaleDateString(undefined,
         {weekday: 'long', day: 'numeric', month: 'long'}) : '';
-  const head = [prefs.location, when, `${cur} ${Math.round(p.totalCost)} for two`]
+  const head = [prefs.location, when, p.adventure, prefs.localOnly ? 'Local only' : '',
+    `${cur} ${Math.round(p.totalCost)} for two`]
     .filter(Boolean).join(' &middot; ');
 
   const mapHtml = routeMap(p.stops, 240);
@@ -496,7 +499,7 @@ function show(d) {
       </div>` + (s.travelNext ? `<div class="travel">&darr;&nbsp; ${esc(s.travelNext)}</div>` : '');
   }).join('');
 
-  const notes = [['Wear', p.wear], ['Getting around', p.transportNote],
+  const notes = [['When', p.timing], ['Wear', p.wear], ['Getting around', p.transportNote],
                  ['Weather', p.weatherCall], ['If it breaks', p.backup]]
     .filter(([, v]) => v)
     .map(([k, v]) => `<div class="detail"><b>${k}:</b> ${esc(v)}</div>`).join('');
@@ -585,6 +588,7 @@ function show(d) {
   put('relationship_stage', p.stage); put('clothing_style', p.style);
   put('transportation', p.transport); put('hours', p.hours);
   put('party_note', p.note); put('lat', p.lat); put('lon', p.lon);
+  put('adventure', p.adventure); $('#local_only').checked = !!p.localOnly; sayAdventure();
   if (Array.isArray(p.interests) && p.interests.length) {
     $('#interests').value = p.interests.join(', ');
     syncChips();
@@ -615,6 +619,16 @@ bNum.addEventListener('input', () => {
 $('#currency').addEventListener('input', e =>
   $('#cur_out').textContent = (e.target.value || 'USD').toUpperCase());
 $('#hours').addEventListener('input', e => $('#hours_out').textContent = e.target.value);
+
+/* ---- adventure ------------------------------------------------------- */
+function sayAdventure() {
+  const [name, say] = ADVENTURE[$('#adventure').value] || ADVENTURE[2];
+  $('#adv_name').textContent = name;
+  $('#adv_say').textContent = say;
+  $('#adventure').setAttribute('aria-valuetext', `${name}: ${say}`);
+}
+$('#adventure').addEventListener('input', sayAdventure);
+sayAdventure();
 
 /* ---- community tab --------------------------------------------------- */
 initCommunity({
