@@ -86,11 +86,23 @@ address it does not, and the app says so instead of failing silently.
 
 **Opening hours are a constraint, not a decoration.** The first Boston plan
 this ever produced put the aquarium at 18:02–19:17 against a closing time of
-18:00. Now whatever shuts first goes first, dinner stays last, and anything
-that still overruns is flagged rather than hidden. `closesAt()` takes the last
+18:00. Now a place that has shut before it is needed is never picked (a Chicago
+plan once sent you to a museum that closes at four), whatever shuts first goes
+first, a visit ends at closing time rather than after it, dinner stays last,
+and anything that still overruns is flagged rather than hidden. The closing-time
+cut happens *after* the evening is trimmed to its window, or dinner gets
+shortened for a stop that is then cut anyway. `closesAt()` takes the last
 clock time in an OSM `opening_hours` string, which is the closing time in every
 common shape; a result before noon means it shuts after midnight, which is
-treated as no limit.
+treated as no limit. It does not read which day each time belongs to yet.
+
+**Travel is measured, not assumed.** Every hop used to say "A few minutes on
+foot" and cost twelve minutes, including a Lisbon transit plan with stops 5 km
+apart. Each leg is now the distance between the two stops at a pace for the
+way you are travelling, and a long walk is flagged. Measured times make some
+evenings too long, so trimming follows two rules: fifteen minutes over comes
+out of the stays rather than costing a stop, and the stop built from what you
+said you like is the last one cut.
 
 **Compound locations resolve broadest-part-first.** "Williamsburg, Brooklyn"
 matches nothing as a whole, and falling back to the specific part alone finds
@@ -196,7 +208,7 @@ page is a key anyone can spend, so it needs a server.
 pip install -r requirements.txt
 python run.py --serve                            # the AI version, locally
 python run.py -l "Brooklyn" -b 90 --dry-run      # a real plan, zero API cost
-python test_planner.py                           # 407 offline tests, no key, no spend
+python test_planner.py                           # 460 offline tests, no key, no spend
 ```
 
 Two implementations of the same rules is a real cost, and worth saying out
@@ -406,7 +418,8 @@ of marching two people up a hill.
 
 **Opening hours are a constraint, not a decoration.** The first Boston plan this
 produced put the aquarium at 18:02–19:17 against a closing time of 18:00.
-Whatever shuts first now goes first, dinner stays last, and anything that still
+Somewhere already shut is never suggested, whatever shuts first now goes first,
+a visit ends when the doors close, dinner stays last, and anything that still
 overruns gets flagged.
 
 **Photographs**, from Wikipedia, for the stop notable enough to have an article
@@ -624,7 +637,7 @@ Expect to spend an afternoon on `planner.SYSTEM` after seeing real output; that
 prompt is the product and nobody gets it right first try. The scouting pass and
 the optional Google-ratings path are untested for the same reason.
 
-407 Python tests pass, offline, with no key and no spend.
+460 Python tests pass, offline, with no key and no spend.
 
 ---
 

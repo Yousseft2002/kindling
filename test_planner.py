@@ -322,6 +322,29 @@ def test_geo() -> None:
     finally:
         geo.search = real_search
 
+    # Open-Meteo matches loosely. Typing "Boston" into the live picker offered
+    # Brilliant, Alabama and Moline, Kansas, which reads as a broken search.
+    def payload(*names):
+        return {"results": [{"name": n, "latitude": 40.0 + i, "longitude": -71.0,
+                             "admin1": "State", "country": "Country"}
+                            for i, n in enumerate(names)]}
+
+    real_get = geo.get_json
+    try:
+        geo.get_json = lambda url, params: payload("Boston", "Boston", "Brilliant", "Moline")
+        got = [p.label for p in geo.search("Boston")]
+        check("the picker keeps only places called what was typed",
+              got == ["Boston", "Boston"], str(got))
+        geo.get_json = lambda url, params: payload("São Paulo", "Frei Paulo")
+        got = [p.label for p in geo.search("Sao Paulo")]
+        check("an accent does not stop a name matching", got == ["São Paulo"], str(got))
+        geo.get_json = lambda url, params: payload("Båstnäs")
+        got = [p.label for p in geo.search("Bostn")]
+        check("a typo still gets the loose match rather than nothing",
+              got == ["Båstnäs"], str(got))
+    finally:
+        geo.get_json = real_get
+
 
 def test_places() -> None:
     """Google Places lookups. Nothing here touches the network: the response
@@ -753,6 +776,148 @@ def test_fit_window() -> None:
     planner._fit_window(s, 2.0)
     starts = [x.start for x in s]
     check("start times stay in order after trimming", starts == sorted(starts), str(starts))
+
+    # Four minutes over is a shorter stay, not a lost stop. The live Boston
+    # plan lost the bar between the aquarium and dinner over exactly this.
+    boston = [
+        stop(name="Aquarium", kind="activity", start="17:00", minutes=75, travel_minutes=12),
+        stop(name="Bar", kind="drinks", start="18:27", minutes=50, travel_minutes=12),
+        stop(name="Dinner", start="19:29", minutes=95),
+    ]
+    planner._fit_window(boston, 4.0)
+    check("a few minutes over shortens a stay instead of cutting a stop",
+          [x.name for x in boston] == ["Aquarium", "Bar", "Dinner"],
+          str([x.name for x in boston]))
+    check("the minutes do not come out of dinner", boston[-1].minutes == 95,
+          str(boston[-1].minutes))
+    span = rules._mins(boston[-1].end) - rules._mins(boston[0].start)
+    check("and the evening then fits its window", span <= 240, str(span))
+
+    # What they asked for is the last thing to go. A Chicago evening asked for
+    # art galleries kept the bar and cut the gallery, because the gallery sat
+    # later in the evening.
+    chicago = [
+        stop(name="Bar", kind="drinks", start="17:00", minutes=50, travel_minutes=25),
+        stop(name="Gallery", kind="activity", start="18:15", minutes=70, travel_minutes=25),
+        stop(name="Dinner", start="19:50", minutes=95),
+    ]
+    planner._fit_window(chicago, 4.0, keep="Gallery")
+    check("a trim keeps the stop they asked for",
+          [x.name for x in chicago] == ["Gallery", "Dinner"], str([x.name for x in chicago]))
+    check("and the evening still starts on time without its opener",
+          chicago[0].start == "17:00", chicago[0].start)
+
+
+def test_evening_shape() -> None:
+    print("\nevening shape")
+
+    # --- a place that has shut is not a suggestion ----------------------
+    # Chicago, live: a museum that closes at 16:00 booked for 17:00, and a
+    # lunch counter that closes at 17:00 booked for dinner at 19:24.
+    museum = fake_venue("Maritime Museum", kind="Museum", hours="Tu-Su 10:00-16:00")
+    gallery = fake_venue("Late Gallery", kind="Gallery", hours="Mo-Su 10:00-20:00")
+    lunch = fake_venue("Lunch Counter", kind="Restaurant", hours="Mo-Su 07:00-17:00")
+    supper = fake_venue("Supper Club", kind="Restaurant", hours="Mo-Su 17:00-23:00")
+    check("a museum shut before the evening starts is passed over",
+          planner._pick([museum, gallery], set(), need_until=17 * 60 + 30) is gallery)
+    check("dinner is never somewhere that shuts before dinner ends",
+          planner._pick([lunch, supper], set(), need_until=21 * 60) is supper)
+    check("unknown hours are not treated as closed",
+          planner._pick([fake_venue("No Hours Bar")], set(), need_until=23 * 60) is not None)
+    check("if everything has shut, nothing is picked rather than a closed door",
+          planner._pick([museum], set(), need_until=17 * 60 + 30) is None)
+    far = fake_venue("Far Bar", lat=38.80, lon=-9.20, hours="Mo-Su 16:00-01:00")
+    near = fake_venue("Near Bar", lat=38.7225, lon=-9.1390, hours="Mo-Su 16:00-01:00")
+    check("of two open places, the one nearer the last stop wins",
+          planner._pick([far, near], set(), near=(38.7223, -9.1393)) is near)
+
+    saved = dict(VENUES)
+    try:
+        VENUES["activity"] = [museum, gallery]
+        VENUES["food"] = [lunch, supper]
+        chicago = planner._offline_plan(prefs(interests=["art"]), DRY)
+    finally:
+        VENUES.clear(); VENUES.update(saved)
+    names = [s.name for s in chicago.stops]
+    check("an evening skips the places that have shut",
+          "Maritime Museum" not in names and "Lunch Counter" not in names, str(names))
+    check("and uses the ones that are open", "Late Gallery" in names and "Supper Club" in names,
+          str(names))
+    warnings = rules.check(chicago, prefs(interests=["art"]), DRY)
+    check("and passes its own rule checks", warnings == [], str(warnings))
+
+    # --- a visit ends when the doors close ------------------------------
+    aq = stop(name="Aquarium", kind="activity", start="17:00", minutes=75,
+              opening_hours="Mo-Su 09:00-18:00", travel_minutes=12)
+    dinner = stop(name="Dinner", start="18:27", minutes=95)
+    planner._close_on_time([aq, dinner])
+    check("a visit is cut to end at closing time", aq.end == "18:00", aq.end)
+    check("the next stop moves up to match", dinner.start == "18:12", dinner.start)
+    late = stop(name="Museum", kind="activity", start="17:40", minutes=70,
+                opening_hours="Mo-Su 10:00-18:00")
+    planner._close_on_time([late])
+    check("a visit is never cut below half an hour, it is flagged instead",
+          late.minutes == 70, str(late.minutes))
+
+    # Closing time applies to the evening that survives the trim. Lisbon, live:
+    # a jazz bar moved ahead of dinner made dinner late enough to be cut to 75
+    # minutes, then the jazz bar was trimmed and dinner kept the cut.
+    step = 0.0144          # about 1.6 km: a 15-minute hop by transit
+    lat0, lon0 = 38.7223, -9.1393
+    saved = dict(VENUES)
+    try:
+        VENUES["drinks"] = [fake_venue("Zenite", hours="Mo-Su 16:00-02:00")]
+        VENUES["show"] = [fake_venue("Teatro", lat=lat0 + step, kind="Theatre")]
+        VENUES["music"] = [fake_venue("Onda Jazz", lat=lat0 + 2 * step)]
+        VENUES["food"] = [fake_venue("Tati", lat=lat0 + 3 * step, kind="Restaurant",
+                                     hours="Mo-Su 17:00-23:00")]
+        lisbon = planner._offline_plan(prefs(relationship_stage="dating", interests=["film"],
+                                             transportation="transit"), DRY)
+    finally:
+        VENUES.clear(); VENUES.update(saved)
+    names = [s.name for s in lisbon.stops]
+    check("the closer that does not fit is the stop cut",
+          "Onda Jazz" not in names and "Teatro" in names, str(names))
+    dinner = next(s for s in lisbon.stops if s.name == "Tati")
+    check("dinner is not shortened for a stop that was then cut",
+          dinner.minutes == 95, str(dinner.minutes))
+    check("a transit evening says how you get between stops",
+          any("bus or metro" in s.travel_next for s in lisbon.stops),
+          str([s.travel_next for s in lisbon.stops]))
+
+    # --- travel is measured, not assumed --------------------------------
+    here = stop(name="A", lat=38.7223, lon=-9.1393)
+    door = stop(name="B", lat=38.7230, lon=-9.1390)        # about 80 m
+    across = stop(name="C", lat=38.7633, lon=-9.0950)      # about 6 km
+    check("next door is a few minutes on foot",
+          planner._leg(here, door, "walking") == (5, "A few minutes on foot."),
+          str(planner._leg(here, door, "walking")))
+    minutes, text = planner._leg(here, across, "walking")
+    check("6 km on foot is not 'a few minutes'", minutes > 60 and "on foot" in text, text)
+    minutes, text = planner._leg(here, across, "transit")
+    check("6 km by transit says so", "bus or metro" in text and minutes < 60, text)
+    check("nobody drives next door", "on foot" in planner._leg(here, door, "car")[1])
+    check("a placeholder has no distance to measure",
+          planner._leg(here, stop(name="Somewhere"), "walking") is None)
+
+    # --- the copy follows the order -------------------------------------
+    order = [
+        stop(name="Aquarium", kind="activity", start="17:00", minutes=60, verified=True,
+             why="Fish."),
+        stop(name="Bar", kind="drinks", start="18:12", minutes=50, verified=True,
+             why=planner.BLURB["drinks"][0]),
+        stop(name="Dinner", start="19:14", minutes=95, verified=True, why="Dinner."),
+    ]
+    planner._retell(order)
+    check("a bar in the middle of the evening does not say 'Start here'",
+          not order[1].why.startswith("Start here") and "first" not in order[1].why,
+          order[1].why)
+    check("the first stop's line is left alone", order[0].why == "Fish.")
+    cap = [order[0], stop(name="Late Bar", kind="drinks", start="18:12", minutes=50,
+                          verified=True, why=planner.BLURB["drinks"][0])]
+    planner._retell(cap)
+    check("a bar at the end of the night reads as a nightcap",
+          cap[-1].why in planner.NIGHTCAP, cap[-1].why)
 
 
 def test_affiliates() -> None:
@@ -1801,6 +1966,14 @@ def test_static_app() -> None:
           "NEAR_KM" in lib["places.js"])
     check("opening hours are read before ordering the evening",
           "closesAt" in lib["plan.js"])
+    # The same rules as the Python planner, by name. Each took a live plan
+    # going wrong to find, and the browser build is the one people use.
+    for rule in ("needUntil", "closeOnTime(", "legs(", "SLACK", "retell(", "!== keep"):
+        check(f"plan.js has the {rule.rstrip('(')} rule", rule in lib["plan.js"])
+    build_js = lib["plan.js"][lib["plan.js"].index("export async function build"):]
+    check("plan.js applies closing times after the trim, not before",
+          build_js.index("closeOnTime(stops)") > build_js.index("fitWindow(stops,"))
+    check("the location picker drops loose matches", "startsWith(typed)" in lib["places.js"])
 
     # An invented affiliate tag does not earn money - it breaks the link and
     # can close the account.
@@ -1835,6 +2008,7 @@ def main() -> int:
     planner.wiki.look = _wiki.look
 
     for fn in (test_rules, test_weather, test_geo, test_places, test_offline_planner, test_fit_window,
+               test_evening_shape,
                test_affiliates, test_model_request, test_cost, test_research, test_repair,
                test_model_failure_falls_back,
                test_defaults, test_server_input, test_render, test_env,

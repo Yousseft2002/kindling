@@ -133,13 +133,24 @@ export function suggest(query, count = 6) {
   if (q.length < 2) return Promise.resolve([]);
   return memo(`suggest:${q.toLowerCase()}:${count}`, DAY, async () => {
     const d = await getJSON(GEOCODE, { name: q, count, language: 'en', format: 'json' });
-    return (d?.results || []).map(r => ({
+    const all = (d?.results || []).map(r => ({
       label: r.name || q,
       lat: +r.latitude, lon: +r.longitude,
       detail: [r.admin1, r.country].filter(Boolean).join(', '),
     }));
+    // The geocoder matches loosely: "Boston" also returns Brilliant, Alabama
+    // and Moline, Kansas, which reads as a broken search. Keep the names that
+    // start with what was typed - accents aside, so "Sao Paulo" keeps São
+    // Paulo - unless that leaves nothing, when a loose match is the only help
+    // on offer for a typo.
+    const typed = fold(q.split(',')[0]);
+    const close = all.filter(p => fold(p.label).startsWith(typed));
+    return close.length ? close : all;
   });
 }
+
+const fold = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '')
+  .toLowerCase().trim();
 
 /** The single best match for a typed location. See the note at the top about
  *  "Williamsburg, Brooklyn". */

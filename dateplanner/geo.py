@@ -26,6 +26,7 @@ import logging
 import math
 import threading
 import time as _time
+import unicodedata
 
 from . import cache
 from .http import get_json
@@ -104,8 +105,21 @@ def search(query: str, count: int = 6) -> list[Place]:
             lon=float(r["longitude"]),
             detail=detail,
         ))
+    # The geocoder matches loosely: "Boston" also returns Brilliant, Alabama
+    # and Moline, Kansas, which reads as a broken search. Keep the names that
+    # start with what was typed - accents aside, so "Sao Paulo" keeps São
+    # Paulo - unless that leaves nothing, when a loose match is the only help
+    # on offer for a typo.
+    typed = _fold(query.split(",")[0])
+    close = [p for p in out if _fold(p.label).startswith(typed)]
+    out = close or out
     cache.places.set(key, out)
     return list(out)
+
+
+def _fold(s: str) -> str:
+    return "".join(c for c in unicodedata.normalize("NFD", s or "")
+                   if not unicodedata.combining(c)).lower().strip()
 
 
 # How far a named neighbourhood may sit from the place the user said it was

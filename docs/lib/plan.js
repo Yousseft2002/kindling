@@ -48,6 +48,20 @@ export const TRANSPORT = {
 const HOP_LIMIT = { walking: 15, bike: 15, transit: 25, car: 20, rideshare: 20 };
 const RADIUS_KM = { walking: 1.5, bike: 4, transit: 6, car: 12, rideshare: 8 };
 
+/* How each way of getting around covers a city: km/h, the minutes it costs
+ * before you move (finding the stop, the car park, the driver), and how to
+ * say it. Straight-line distance times DETOUR is roughly the street route. */
+const DETOUR = 1.3;
+const PACE = {
+  walking: [4.8, 0, 'on foot'],
+  bike: [14, 3, 'by bike'],
+  transit: [18, 8, 'by bus or metro'],
+  car: [25, 8, 'by car, parking included'],
+  rideshare: [25, 5, 'by taxi or rideshare'],
+};
+/* Nobody takes a car or waits for a tram to go somewhere this close. */
+const JUST_WALK = 12;
+
 /* Minutes and share of budget per slot. Dinner gets the money and the time;
  * everything else is there to make dinner better. */
 const SHAPE = {
@@ -93,6 +107,20 @@ const COPY = {
   food: ['Dinner, and the only stop worth booking ahead.',
          'The anchor. Everything before this was warm-up.'],
 };
+
+/* The opener's lines say "start here", and respectHours moves the opener
+ * behind anything that shuts early - which printed "Start here" on stop two,
+ * after the aquarium. The same kinds of stop, for anywhere but first. */
+const LATER = {
+  drinks: ['One drink, somewhere with a bit of noise, to talk over what you just saw.',
+           'A drink in between: cheap, short, and a chance to sit down.'],
+  coffee: ['Somewhere to sit down and compare notes before anything else is decided.',
+           'Coffee in between - low stakes, and easy to leave.'],
+  viewpoint: ['Free, outdoors, and the light does the work for you.',
+              'A breather above the noise. It costs nothing and the view does the talking.'],
+};
+const NIGHTCAP = ['One more, somewhere quieter, before you call it a night.',
+                  'A nightcap. Short, and entirely optional.'];
 
 /* --- time helpers ----------------------------------------------------- */
 const hhmm = m => `${String(Math.floor(m / 60) % 24).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
@@ -154,6 +182,9 @@ export async function build(prefs, weather, onPhase = () => {}) {
   onPhase('Looking for places near you');
   const stops = [];
   const used = new Set();
+  const opening = t;
+  let from = prefs.lat != null ? { lat: prefs.lat, lon: prefs.lon } : null;
+  let keep = null;          // the anchor: the stop built from what they said they like
   let left = prefs.budget;
 
   for (let i = 0; i < slots.length; i++) {
@@ -162,8 +193,13 @@ export async function build(prefs, weather, onPhase = () => {}) {
     const cost = Math.round(Math.min(left, prefs.budget * share) * 100) / 100;
     const last = i === slots.length - 1;
 
+    // Anything but dinner may be moved to the front by respectHours, so it
+    // only has to be open for half an hour after the evening starts. Dinner
+    // always ends the night, so it has to stay open to the end of it.
+    const needUntil = slot === 'food' ? t + minutes : opening + 30;
     const hits = await nearby(slot, prefs.lat, prefs.lon, prefs.transport, 6);
-    const venue = pick(hits, used);
+    const venue = pick(hits, used, { from, needUntil });
+    if (venue) from = venue;
 
     const stop = venue ? realStop(slot, venue, prefs, t, minutes, cost, last)
                        : placeholder(slot, prefs, t, minutes, cost, last);
@@ -175,12 +211,16 @@ export async function build(prefs, weather, onPhase = () => {}) {
 
     stops.push(stop);
     used.add(stop.name.toLowerCase());
+    if (i === 1) keep = stop.name;
     left = Math.max(0, left - cost);
     t += minutes + (last ? 0 : 12);
   }
 
   respectHours(stops);
-  fitWindow(stops, Math.min(stage.maxHours, prefs.hours));
+  legs(stops, prefs.transport);
+  fitWindow(stops, Math.min(stage.maxHours, prefs.hours), prefs.transport, keep);
+  closeOnTime(stops);
+  retell(stops);
 
   onPhase('Finding a photograph');
   for (const s of stops) {
@@ -216,12 +256,20 @@ export async function build(prefs, weather, onPhase = () => {}) {
   return plan;
 }
 
-/** Nearest unused candidate, preferring ones with published hours - a decent
- *  proxy for a place someone actually maintains. */
-function pick(candidates, used) {
-  const fresh = candidates.filter(c => !used.has(c.name.toLowerCase()));
+/** The candidate to use. Never one already in the plan, and never one that
+ *  has shut before it is needed: this used to take the first place with
+ *  published hours whatever they said, and a Chicago evening sent you to a
+ *  museum that closes at four and a lunch counter that closes at five. Then
+ *  published hours - a decent proxy for a place someone maintains - and then
+ *  the nearest to the last stop, so the evening is a route, not a scatter. */
+export function pick(candidates, used, { from = null, needUntil = null } = {}) {
+  const shut = c => closesAt(c.openingHours);
+  const fresh = candidates.filter(c => !used.has(c.name.toLowerCase()))
+    .filter(c => needUntil == null || shut(c) == null || shut(c) >= needUntil);
   if (!fresh.length) return null;
-  return fresh.sort((a, b) => (a.openingHours ? 0 : 1) - (b.openingHours ? 0 : 1))[0];
+  const away = c => (from && c.lat != null) ? distanceKm(c.lat, c.lon, from.lat, from.lon) : 0;
+  return fresh.sort((a, b) =>
+    ((a.openingHours ? 0 : 1) - (b.openingHours ? 0 : 1)) || (away(a) - away(b)))[0];
 }
 
 function realStop(slot, v, prefs, t, minutes, cost, last) {
@@ -310,30 +358,118 @@ function reflow(stops) {
   for (const s of stops) { s.start = hhmm(t); t += s.minutes + s.travelMinutes; }
 }
 
-/** Trim until the evening fits the time it was given. The last stop goes
- *  first: it is the optional one by construction, and cutting the closer
- *  always beats rushing dinner. */
-export function fitWindow(stops, maxHours) {
+/** How long it takes to get from one stop to the next, and how to say it.
+ *  Null when either end has no coordinates, which is a placeholder. */
+export function leg(a, b, transport = 'walking') {
+  if (a.lat == null || b.lat == null) return null;
+  const km = distanceKm(a.lat, a.lon, b.lat, b.lon) * DETOUR;
+  const [speed, extra, how] = PACE[transport] || PACE.walking;
+  const walk = Math.ceil(km / PACE.walking[0] * 60);
+  const onFoot = transport === 'walking'
+    || (transport !== 'bike' && walk <= JUST_WALK);
+  const minutes = onFoot ? walk : Math.ceil(km / speed * 60) + extra;
+  const said = onFoot ? 'on foot' : how;
+  if (minutes <= 5) return { minutes: 5, text: `A few minutes ${said}.` };
+  const rounded = Math.ceil(minutes / 5) * 5;
+  return { minutes: rounded, text: `About ${rounded} minutes ${said}.` };
+}
+
+/** Real travel between the stops, in the order the evening ended up in.
+ *  Every hop used to be "A few minutes on foot" and twelve minutes, which a
+ *  Lisbon transit plan with its stops 2 and 5 km apart made plainly untrue. */
+export function legs(stops, transport) {
+  if (!stops.length) return;
+  stops.forEach((s, i) => {
+    const next = stops[i + 1];
+    if (!next) { s.travelNext = ''; s.travelMinutes = 0; return; }
+    const hop = leg(s, next, transport);
+    if (hop) { s.travelNext = hop.text; s.travelMinutes = hop.minutes; return; }
+    s.travelNext = s.travelNext || 'A few minutes on foot.';
+    s.travelMinutes = s.travelMinutes || 12;
+  });
+  reflow(stops);
+}
+
+/** End a visit at closing time rather than after it. Moved to the front, the
+ *  aquarium still ran 17:00-18:15 against an 18:00 close: the order was right
+ *  and the length was not. Never below half an hour - a stop that short is
+ *  not worth the walk, and check() will say so instead.
+ *
+ *  Run it after fitWindow, not before. Before, a Lisbon dinner was cut to 75
+ *  minutes because a jazz bar ahead of it made it late - and then the jazz
+ *  bar was trimmed from the evening and dinner kept the cut. */
+export function closeOnTime(stops) {
+  for (const s of stops) {
+    const shut = closesAt(s.openingHours), start = mins(s.start);
+    if (shut == null || start == null) continue;
+    const room = shut - start;
+    if (room < s.minutes && room >= 30) { s.minutes = room; reflow(stops); }
+  }
+}
+
+/* An overrun this small is a shorter stay somewhere, not a lost stop. Boston
+ * lost the bar between the aquarium and dinner because the three of them ran
+ * four minutes past a four-hour window. */
+const SLACK = 15;
+
+/** Take `over` minutes out of the evening without cutting a stop: from the
+ *  longest stops that are not dinner first, never below 30 minutes each.
+ *  Changes nothing and returns false if it cannot be done. */
+function shave(stops, over) {
+  const order = [...stops].sort((a, b) =>
+    ((a.kind === 'food') - (b.kind === 'food')) || (b.minutes - a.minutes));
+  if (order.reduce((n, s) => n + Math.max(0, s.minutes - 30), 0) < over) return false;
+  for (const s of order) {
+    const take = Math.min(over, Math.max(0, s.minutes - 30));
+    s.minutes -= take;
+    over -= take;
+    if (!over) break;
+  }
+  reflow(stops);
+  return true;
+}
+
+/** Trim until the evening fits the time it was given. A few minutes over comes
+ *  out of the stays; more than that costs a stop, and the last stop goes first:
+ *  it is the optional one by construction, and cutting the closer always beats
+ *  rushing dinner. `keep` names the anchor, which goes only when nothing
+ *  else can. */
+export function fitWindow(stops, maxHours, transport, keep = null) {
   const span = () => {
     const a = mins(stops[0].start) ?? 0, z = stops[stops.length - 1];
     return (mins(z.start) ?? 0) + z.minutes - a;
   };
   const limit = Math.round(maxHours * 60);
   while (stops.length > 2 && span() > limit) {
+    if (span() - limit <= SLACK && shave(stops, span() - limit)) break;
     // Not simply the last stop. respectHours has already moved dinner to the
     // end, so popping blindly cuts the one thing this is supposed to protect
     // - a Boston evening came back as drinks, live music and more drinks,
-    // with no dinner in it at all. Cut the last stop that is not food.
+    // with no dinner in it at all. Cut the last stop that is not food, and
+    // not the anchor either: a Chicago evening asked for art galleries lost
+    // the gallery and kept the bar in front of it.
+    const cuttable = n => stops[n].kind !== 'food' && stops[n].name !== keep;
     let i = -1;
     for (let n = stops.length - 1; n > 0; n--) {
-      if (stops[n].kind !== 'food') { i = n; break; }
+      if (cuttable(n)) { i = n; break; }
+    }
+    if (i < 0 && cuttable(0)) i = 0;       // only the opener is left to give
+    if (i < 0) {
+      for (let n = stops.length - 1; n > 0; n--) {
+        if (stops[n].kind !== 'food') { i = n; break; }
+      }
     }
     if (i < 0) i = stops.length - 1;       // nothing but food: cut the tail
+    // The evening still starts when it was told to, whoever is first now.
+    if (i === 0) stops[1].start = stops[0].start;
     stops.splice(i, 1);
     const last = stops[stops.length - 1];
     last.travelNext = '';
     last.travelMinutes = 0;
-    reflow(stops);
+    // The stops either side of the cut are now neighbours, and the walk
+    // between them is not the walk either of them had before.
+    if (transport) legs(stops, transport);
+    else reflow(stops);
   }
   for (const s of [...stops].sort((a, b) => b.minutes - a.minutes).slice(0, 2)) {
     const over = span() - limit;
@@ -341,6 +477,17 @@ export function fitWindow(stops, maxHours) {
     s.minutes = Math.max(30, s.minutes - over);
     reflow(stops);
   }
+}
+
+/** Say the right thing for where each stop ended up. Only the lines that
+ *  claim a position change; the rest read the same anywhere. */
+function retell(stops) {
+  stops.forEach((s, i) => {
+    if (i === 0 || !s.verified || !LATER[s.kind]) return;
+    const lines = (s.kind === 'drinks' && i === stops.length - 1) ? NIGHTCAP : LATER[s.kind];
+    s.why = lines[Math.abs(hash(s.name)) % lines.length]
+          + (s.cuisine ? ` Expect ${s.cuisine.split(',')[0].trim()}.` : '');
+  });
 }
 
 /* --- the checks -------------------------------------------------------

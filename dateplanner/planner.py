@@ -18,6 +18,7 @@ should go *there*, in that order, on that night. That is what the key buys.
 from __future__ import annotations
 
 import logging
+import math
 import os
 from datetime import date, time, timedelta
 
@@ -436,13 +437,115 @@ def _hhmm(minutes: int) -> str:
     return f"{(minutes // 60) % 24:02d}:{minutes % 60:02d}"
 
 
-def _fit_window(stops: list[Stop], max_hours: float, min_stops: int = 2) -> None:
+# How each way of getting around covers a city: km/h, the minutes it costs
+# before you move (finding the stop, the car park, the driver), and how to say
+# it. Straight-line distance times DETOUR is roughly the street route.
+DETOUR = 1.3
+PACE = {
+    "walking":   (4.8, 0, "on foot"),
+    "bike":      (14, 3, "by bike"),
+    "transit":   (18, 8, "by bus or metro"),
+    "car":       (25, 8, "by car, parking included"),
+    "rideshare": (25, 5, "by taxi or rideshare"),
+}
+# Nobody takes a car or waits for a tram to go somewhere this close.
+JUST_WALK = 12
+
+
+def _leg(a: Stop, b: Stop, transport: str) -> tuple[int, str] | None:
+    """Minutes from one stop to the next, and how to say it. None when either
+    end has no coordinates, which is a placeholder."""
+    if a.lat is None or b.lat is None:
+        return None
+    km = geo.distance_km(a.lat, a.lon, b.lat, b.lon) * DETOUR
+    speed, extra, how = PACE.get(transport, PACE["walking"])
+    walk = math.ceil(km / PACE["walking"][0] * 60)
+    on_foot = transport == "walking" or (transport != "bike" and walk <= JUST_WALK)
+    minutes = walk if on_foot else math.ceil(km / speed * 60) + extra
+    said = "on foot" if on_foot else how
+    if minutes <= 5:
+        return 5, f"A few minutes {said}."
+    rounded = math.ceil(minutes / 5) * 5
+    return rounded, f"About {rounded} minutes {said}."
+
+
+def _legs(stops: list[Stop], transport: str) -> None:
+    """Real travel between the stops, in the order the evening ended up in.
+    Mutates.
+
+    Every hop used to be "A few minutes on foot" and twelve minutes, which a
+    Lisbon transit plan with its stops 2 and 5 km apart made plainly untrue.
+    """
+    if not stops:
+        return
+    for s, nxt in zip(stops, stops[1:]):
+        hop = _leg(s, nxt, transport)
+        if hop:
+            s.travel_minutes, s.travel_next = hop
+        else:
+            s.travel_minutes = s.travel_minutes or 12
+            s.travel_next = s.travel_next or "A few minutes on foot."
+    stops[-1].travel_next = ""
+    stops[-1].travel_minutes = 0
+    _restart(stops)
+
+
+def _close_on_time(stops: list[Stop]) -> None:
+    """End a visit at closing time rather than after it. Mutates.
+
+    Moved to the front, the aquarium still ran 17:00-18:15 against an 18:00
+    close: the order was right and the length was not. Never below half an
+    hour - a stop that short is not worth the walk, and `rules.check` will say
+    so instead.
+
+    Run it after `_fit_window`, not before. Before, a Lisbon dinner was cut to
+    75 minutes because a jazz bar ahead of it made it late - and then the jazz
+    bar was trimmed from the evening and dinner kept the cut.
+    """
+    for s in stops:
+        shut = osm.closes_at(s.opening_hours)
+        if shut is None:
+            continue
+        h, m = (int(x) for x in s.start.split(":"))
+        room = shut - (h * 60 + m)
+        if 30 <= room < s.minutes:
+            s.minutes = room
+            _restart(stops)
+
+
+# An overrun this small is a shorter stay somewhere, not a lost stop. Boston
+# lost the bar between the aquarium and dinner because the three of them ran
+# four minutes past a four-hour window.
+SLACK = 15
+
+
+def _shave(stops: list[Stop], over: int) -> bool:
+    """Take `over` minutes out of the evening without cutting a stop: from the
+    longest stops that are not dinner first, never below 30 minutes each.
+    Changes nothing and returns False if it cannot be done."""
+    order = sorted(stops, key=lambda s: (s.kind == "food", -s.minutes))
+    if sum(max(0, s.minutes - 30) for s in order) < over:
+        return False
+    for s in order:
+        take = min(over, max(0, s.minutes - 30))
+        s.minutes -= take
+        over -= take
+        if not over:
+            break
+    _restart(stops)
+    return True
+
+
+def _fit_window(stops: list[Stop], max_hours: float, min_stops: int = 2,
+                transport: str | None = None, keep: str | None = None) -> None:
     """Trim the itinerary until it fits the time it was given. Mutates.
 
     The offline planner assembles the full arc first and shortens afterwards,
-    because which stop to cut depends on how long the others ended up. The
+    because which stop to cut depends on how long the others ended up. A few
+    minutes over comes out of the stays; more than that costs a stop, and the
     last stop goes first: it is the optional one by construction, and cutting
-    the closer is always better than rushing dinner.
+    the closer is always better than rushing dinner. `keep` names the anchor,
+    which goes only when nothing else can.
     """
     def span_minutes() -> int:
         head, tail = stops[0], stops[-1]
@@ -452,16 +555,35 @@ def _fit_window(stops: list[Stop], max_hours: float, min_stops: int = 2) -> None
 
     limit = int(max_hours * 60)
     while len(stops) > min_stops and span_minutes() > limit:
+        if span_minutes() - limit <= SLACK and _shave(stops, span_minutes() - limit):
+            break
         # Not simply the last stop. `_respect_hours` has already moved dinner
         # to the end, so popping blindly cuts the one thing the docstring
         # promises to keep - a Boston evening came back as drinks, live music
-        # and more drinks, with no dinner in it. Cut the last non-food stop.
-        i = next((n for n in range(len(stops) - 1, 0, -1)
-                  if stops[n].kind != "food"), len(stops) - 1)
+        # and more drinks, with no dinner in it. Cut the last non-food stop,
+        # and not the anchor either: a Chicago evening asked for art galleries
+        # lost the gallery and kept the bar in front of it.
+        def cuttable(n: int) -> bool:
+            return stops[n].kind != "food" and stops[n].name != keep
+
+        i = next((n for n in range(len(stops) - 1, 0, -1) if cuttable(n)), None)
+        if i is None and cuttable(0):
+            i = 0                          # only the opener is left to give
+        if i is None:
+            i = next((n for n in range(len(stops) - 1, 0, -1)
+                      if stops[n].kind != "food"), len(stops) - 1)
+        if i == 0:
+            # The evening still starts when it was told to, whoever is first now.
+            stops[1].start = stops[0].start
         stops.pop(i)
         stops[-1].travel_next = ""
         stops[-1].travel_minutes = 0
-        _restart(stops)
+        # The stops either side of the cut are now neighbours, and the walk
+        # between them is not the walk either of them had before.
+        if transport:
+            _legs(stops, transport)
+        else:
+            _restart(stops)
 
     # Still over at the minimum number of stops: take it out of the two longest,
     # never below 30 minutes - a 20-minute dinner is not a plan.
@@ -532,16 +654,32 @@ def _slots_for(prefs: Prefs, w: Weather) -> list[str]:
     return slots
 
 
-def _pick(candidates: list, used: set) -> object | None:
-    """Nearest unused candidate, preferring ones with published hours.
+def _pick(candidates: list, used: set, near: tuple[float, float] | None = None,
+          need_until: int | None = None) -> object | None:
+    """The candidate to use.
 
-    Published opening hours are a decent proxy for a place someone actually
-    maintains, and they let the plan say when the kitchen shuts.
+    Never one already in the plan, and never one that has shut before it is
+    needed: this used to take the first place with published hours whatever
+    they said, and a Chicago evening sent you to a museum that closes at four
+    and a lunch counter that closes at five. Then published hours - a decent
+    proxy for a place someone actually maintains, and they let the plan say
+    when the kitchen shuts - and then the nearest to the last stop, so the
+    evening is a route rather than a scatter.
     """
-    fresh = [c for c in candidates if c.name.lower() not in used]
+    def open_long_enough(c) -> bool:
+        shut = osm.closes_at(c.opening_hours)
+        return need_until is None or shut is None or shut >= need_until
+
+    def away(c) -> float:
+        if near is None or c.lat is None:
+            return 0.0
+        return geo.distance_km(c.lat, c.lon, near[0], near[1])
+
+    fresh = [c for c in candidates
+             if c.name.lower() not in used and open_long_enough(c)]
     if not fresh:
         return None
-    fresh.sort(key=lambda c: (0 if c.opening_hours else 1))
+    fresh.sort(key=lambda c: (0 if c.opening_hours else 1, away(c)))
     return fresh[0]
 
 
@@ -587,6 +725,41 @@ BLURB = {
         "The anchor. Everything before this was warm-up.",
     ],
 }
+
+# The opener's lines say "start here", and `_respect_hours` moves the opener
+# behind anything that shuts early - which printed "Start here" on stop two,
+# after the aquarium. The same kinds of stop, for anywhere but first.
+LATER = {
+    "drinks": [
+        "One drink, somewhere with a bit of noise, to talk over what you just saw.",
+        "A drink in between: cheap, short, and a chance to sit down.",
+    ],
+    "coffee": [
+        "Somewhere to sit down and compare notes before anything else is decided.",
+        "Coffee in between - low stakes, and easy to leave.",
+    ],
+    "viewpoint": [
+        "Free, outdoors, and the light does the work for you.",
+        "A breather above the noise. It costs nothing and the view does the talking.",
+    ],
+}
+NIGHTCAP = [
+    "One more, somewhere quieter, before you call it a night.",
+    "A nightcap. Short, and entirely optional.",
+]
+
+
+def _retell(stops: list[Stop]) -> None:
+    """Say the right thing for where each stop ended up. Mutates. Only the
+    lines that claim a position change; the rest read the same anywhere."""
+    for i, s in enumerate(stops):
+        if i == 0 or not s.verified or s.kind not in LATER:
+            continue
+        lines = NIGHTCAP if s.kind == "drinks" and i == len(stops) - 1 else LATER[s.kind]
+        why = lines[hash(s.name) % len(lines)]
+        if s.cuisine:
+            why = f"{why} Expect {s.cuisine.split(',')[0].strip()}."
+        s.why = why
 
 # Minutes and share of budget per slot. Dinner gets the money and the time;
 # everything else is there to make dinner better.
@@ -682,13 +855,21 @@ def _offline_plan(prefs: Prefs, w: Weather) -> Plan:
     stops: list[Stop] = []
     used: set[str] = set()
     t = start_m
+    near = (prefs.lat, prefs.lon) if prefs.lat is not None else None
+    keep = None            # the anchor: the stop built from what they said they like
     budget_left = prefs.budget
 
     for i, slot in enumerate(slots):
         minutes, share = SHAPE.get(slot, (60, 0.2))
         cost = round(min(budget_left, prefs.budget * share), 2)
         hits = osm.nearby(slot, prefs.lat, prefs.lon, prefs.transportation, limit=6)
-        venue = _pick(hits, used)
+        # Anything but dinner may be moved to the front by `_respect_hours`,
+        # so it only has to be open for half an hour after the evening starts.
+        # Dinner always ends the night, so it has to stay open to the end of it.
+        need_until = t + minutes if slot == "food" else start_m + 30
+        venue = _pick(hits, used, near=near, need_until=need_until)
+        if venue is not None:
+            near = (venue.lat, venue.lon)
         last = i == len(slots) - 1
 
         if venue is None:
@@ -707,12 +888,18 @@ def _offline_plan(prefs: Prefs, w: Weather) -> Plan:
 
         used.add(stop.name.lower())
         stops.append(stop)
+        if i == 1:
+            keep = stop.name
 
         budget_left = max(0.0, budget_left - cost)
         t += minutes + (0 if last else 12)
 
     _respect_hours(stops)
-    _fit_window(stops, min(sr["max_hours"], prefs.hours))
+    _legs(stops, prefs.transportation)
+    _fit_window(stops, min(sr["max_hours"], prefs.hours),
+                transport=prefs.transportation, keep=keep)
+    _close_on_time(stops)
+    _retell(stops)
 
     # A photograph for whichever stop has one. `places.enrich` does this for
     # model plans but skips offline ones entirely, so it happens here - and
