@@ -8,5 +8,5 @@
  * Supabase > Project Settings > API: "Project URL" and the "anon public" key.
  * Leave them empty and the Community tab simply does not appear.
  */
-export const SUPABASE_URL = '';
-export const SUPABASE_ANON_KEY = '';
+export const SUPABASE_URL = 'https://rqicodsmdbbdeihyntwo.supabase.co';
+export const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJxaWNvZHNtZGJiZGVpaHludHdvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTAzMTIzMzksImV4cCI6MjEwNTg4ODMzOX0._uau44ncGaz2eFft8xSFEj3ttoSlslt0c-mxRb6E3co';
