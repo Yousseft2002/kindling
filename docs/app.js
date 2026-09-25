@@ -64,11 +64,52 @@ if (window.visualViewport) {
   // the whole layout to that - which then stayed shrunk and looked like the
   // page was stuck zoomed in.
   const fit = () => document.documentElement.style.setProperty('--vh', (vv.height * (vv.scale || 1)) + 'px');
-  vv.addEventListener('resize', fit);
+
+  /* Keep the field being typed in centred in what is actually visible.
+     scrollIntoView used to do this, and it scrolled the page as well as the
+     question: iOS had already scrolled the page to reveal the field, the
+     layout then shrank to fit above the keyboard, and between them the field
+     ended up pinned to the top of the screen. Now:
+       - on the questions, the page never scrolls - it is already sized to
+         the space above the keyboard - and only the question area moves;
+       - in a sheet, the sheet scrolls, measured against the part of it the
+         keyboard is not covering;
+       - on pages that scroll (a plan, the community), the page scrolls. */
+  const questions = () => !document.body.classList.contains('done')
+                       && !document.body.classList.contains('tab-community');
+  const typing = () => {
+    const el = document.activeElement;
+    return el && el.matches('input:not([type=range]):not([type=checkbox]),textarea,select') ? el : null;
+  };
+  function centre(el) {
+    if (!el?.isConnected) return;
+    const top = vv.offsetTop, bottom = vv.offsetTop + vv.height;
+    const box = el.closest('dialog') || (questions() && el.closest('.deck'));
+    if (box) {
+      const b = box.getBoundingClientRect();
+      const lo = Math.max(b.top, top), hi = Math.min(b.bottom, bottom);
+      const r = el.getBoundingClientRect();
+      box.scrollTop += (r.top + r.height / 2) - (lo + hi) / 2;
+      return;
+    }
+    const r = el.getBoundingClientRect();
+    window.scrollBy(0, (r.top + r.height / 2) - (top + bottom) / 2);
+  }
+  const settle = () => {
+    // On the questions the page itself stays at the top; iOS scrolls it to
+    // reveal the field, and that is what pushed the field to the top.
+    if (questions() && (window.scrollY || vv.offsetTop)) window.scrollTo(0, 0);
+    centre(typing());
+  };
+
+  vv.addEventListener('resize', () => { fit(); if (typing()) settle(); });
+  vv.addEventListener('scroll', () => { if (typing() && questions()) settle(); });
   fit();
   document.addEventListener('focusin', e => {
-    if (!e.target.matches('input,textarea')) return;
-    setTimeout(() => e.target.scrollIntoView({block: 'center', behavior: 'smooth'}), 250);
+    if (!typing()) return;
+    // Once straight away, and again when the keyboard has finished opening.
+    requestAnimationFrame(settle);
+    setTimeout(settle, 350);
   });
 }
 
