@@ -104,6 +104,17 @@ evenings too long, so trimming follows two rules: fifteen minutes over comes
 out of the stays rather than costing a stop, and the stop built from what you
 said you like is the last one cut.
 
+**The community is optional and never in the way.** People share evenings they
+have been on, love the good ones, and become a city's local guides (3 evenings,
+10 loves). The planner reads what locals shared near the plan: their places rank
+first, can be routed to even when the map search never returned them, carry the
+locals' notes, and the best evenings appear as Real People's Insights. It is
+Supabase over plain `fetch` (no client library), and every rule that matters is
+row-level security in `supabase/schema.sql`, because the browser holds the key.
+With `docs/config.js` empty the tab is hidden; with no signal, or a slow
+backend (over 4 s), the plan is made without it. Setup: `SUPABASE-SETUP.md`.
+The community is browser-only; the Python planner does not read it.
+
 **Compound locations resolve broadest-part-first.** "Williamsburg, Brooklyn"
 matches nothing as a whole, and falling back to the specific part alone finds
 Williamsburg *Virginia* — a confident answer 500 km from the date. So the
@@ -191,7 +202,12 @@ docs/                 the app — this is what GitHub Pages serves
   lib/wiki.js         photograph and blurb, with the coordinate guard
   lib/plan.js         slots, composition, the rules
   lib/links.js        booking and map links
+  lib/community.js    the community: sign-in, evenings, what the planner learns
+  community-tab.js    the Community tab
+  config.js           the Supabase project (empty = no Community tab)
+  privacy.html        what is stored and the house rules
   sw.js               offline shell
+supabase/schema.sql   the community's tables and every rule protecting them
 ```
 
 ---
@@ -208,7 +224,7 @@ page is a key anyone can spend, so it needs a server.
 pip install -r requirements.txt
 python run.py --serve                            # the AI version, locally
 python run.py -l "Brooklyn" -b 90 --dry-run      # a real plan, zero API cost
-python test_planner.py                           # 460 offline tests, no key, no spend
+python test_planner.py                           # 475 offline tests, no key, no spend
 ```
 
 Two implementations of the same rules is a real cost, and worth saying out
@@ -637,7 +653,7 @@ Expect to spend an afternoon on `planner.SYSTEM` after seeing real output; that
 prompt is the product and nobody gets it right first try. The scouting pass and
 the optional Google-ratings path are untested for the same reason.
 
-460 Python tests pass, offline, with no key and no spend.
+475 Python tests pass, offline, with no key and no spend.
 
 ---
 

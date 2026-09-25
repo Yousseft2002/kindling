@@ -12,7 +12,7 @@
  * and would cache the wrong thing, or nothing at all.
  */
 
-const VERSION = 'kindling-v3';
+const VERSION = 'kindling-v4';
 const ROOT = new URL('./', self.location);           // .../kindling/
 const at = path => new URL(path, ROOT).toString();
 
@@ -21,12 +21,16 @@ const SHELL = [
   at('./'),
   at('index.html'),
   at('app.js'),
+  at('config.js'),
+  at('community-tab.js'),
   at('lib/net.js'),
   at('lib/places.js'),
   at('lib/weather.js'),
   at('lib/wiki.js'),
   at('lib/plan.js'),
   at('lib/links.js'),
+  at('lib/community.js'),
+  at('privacy.html'),
   at('manifest.webmanifest'),
   at('icons/icon-192.png'),
   at('icons/icon-512.png'),
@@ -57,23 +61,34 @@ self.addEventListener('fetch', event => {
 
   const url = new URL(request.url);
 
-  // Live data - places, weather, photographs, map tiles - is never cached.
-  // A stale itinerary carrying yesterday's opening hours is worse than an
-  // honest error, and the tiles are somebody else's bandwidth.
+  // Live data - places, weather, photographs, map tiles, the community - is
+  // never cached. A stale itinerary carrying yesterday's opening hours is
+  // worse than an honest error, and the tiles are somebody else's bandwidth.
   if (url.origin !== self.location.origin) return;
 
   // Navigations: try the network so a redeployed app is picked up, fall back
-  // to the cached shell when there is no signal.
+  // to the cached copy when there is no signal.
+  //
+  // Each page is cached as itself. This used to store every navigation as
+  // "./", which was harmless while the app was one page; with a privacy page
+  // beside it, reading that and then losing signal would open the privacy
+  // page in place of the app.
   if (request.mode === 'navigate') {
+    const key = new URL(url.pathname, url).toString();   // no ?query, no #fragment
+    const page = key === at('index.html') ? at('./') : key;
     event.respondWith(
       fetch(request)
         .then(response => {
-          const copy = response.clone();
-          caches.open(VERSION).then(c => c.put(at('./'), copy)).catch(() => {});
+          if (response.ok) {
+            const copy = response.clone();
+            caches.open(VERSION).then(c => c.put(page, copy)).catch(() => {});
+          }
           return response;
         })
-        .catch(() => caches.match(at('./'))
-          .then(hit => hit || caches.match(at('index.html')) || Response.error()))
+        .catch(() => caches.match(page)
+          .then(hit => hit || caches.match(at('./')))
+          .then(hit => hit || caches.match(at('index.html')))
+          .then(hit => hit || Response.error()))
     );
     return;
   }

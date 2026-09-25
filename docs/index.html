@@ -364,7 +364,113 @@
   .sources a{color:var(--muted);text-decoration:none;border-bottom:1px solid var(--line)}
   .sources a:hover{color:var(--accent);border-color:var(--accent)}
   .foot{margin:22px 0 0;font-size:13.5px;color:var(--faint);line-height:1.6}
+  .foot a{color:inherit}
   .err{border-color:var(--warn-line);background:var(--warn-bg);color:var(--warn-ink);font-size:17px}
+
+  /* ---- tabs ---- */
+  /* Two places to be: planning an evening, and reading what locals did with
+     theirs. Hidden entirely until a community backend is configured. */
+  .tabs{flex:none;display:flex;gap:4px;padding:4px;margin:0 0 16px;border-radius:99px;
+        background:var(--card);border:1.5px solid var(--line)}
+  .tabs[hidden]{display:none}
+  .tabs button{flex:1;min-height:44px;border:0;border-radius:99px;background:transparent;
+        color:var(--muted);font:inherit;font-size:15px;font-weight:600;cursor:pointer;
+        transition:background .2s,color .2s}
+  .tabs button[aria-selected=true]{background:var(--ink);color:var(--bg)}
+  :is(.tabs button,.seg button,.love,.quiet,button.btn,.person):focus-visible{
+        outline:3px solid var(--accent);outline-offset:2px}
+  body.tab-community #f,body.tab-community #nav,body.tab-community #out{display:none!important}
+  body.tab-community .wrap{height:auto;min-height:100vh;min-height:100svh}
+  body.tab-community .bar,body.tab-community .count{visibility:hidden}
+
+  /* ---- community ---- */
+  #community[hidden]{display:none}
+  #community{animation:arrive .32s var(--ease) both}
+  .c-title{font-family:var(--serif);font-size:clamp(28px,6.6vw,40px);line-height:1.1;
+           margin:0 0 10px;font-weight:600;letter-spacing:-.02em}
+  .c-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;
+         margin:18px 0;flex-wrap:wrap}
+  .seg{display:inline-flex;border:1.5px solid var(--line);border-radius:99px;padding:3px;
+       background:var(--card)}
+  .seg button{min-height:40px;border:0;background:transparent;border-radius:99px;padding:0 15px;
+       font:inherit;font-size:14.5px;font-weight:600;color:var(--muted);cursor:pointer}
+  .seg button[aria-pressed=true]{background:var(--accent-soft);color:var(--accent)}
+  button.btn{border:0;cursor:pointer;font:inherit;font-size:15px;font-weight:600;min-height:44px}
+  button.btn.ghost{border:1.5px solid var(--line)}
+  .guides{margin:0 0 16px;padding:18px 20px}
+  .guides h4,.insights h4{margin:0 0 12px;font-size:12.5px;letter-spacing:.14em;
+       text-transform:uppercase;color:var(--accent);font-weight:600}
+  .people{display:flex;flex-wrap:wrap;gap:8px}
+  .person{display:inline-flex;flex-wrap:wrap;align-items:center;gap:4px 8px;padding:9px 14px;
+          border-radius:16px;background:var(--bg2);font-size:15px;font-weight:600}
+  .person small{flex-basis:100%;font-weight:400;font-size:12.5px;color:var(--faint)}
+  .badge{display:inline-block;padding:3px 9px;border-radius:99px;background:var(--accent);
+         color:#fff;font-size:10.5px;font-weight:700;letter-spacing:.07em;
+         text-transform:uppercase;vertical-align:1px}
+  @media (prefers-color-scheme:dark){.badge{color:#1d1712}}
+  .post{margin-bottom:14px;animation:rise .36s var(--ease) backwards}
+  .post .meta{font-size:12.5px;letter-spacing:.1em;text-transform:uppercase;
+              color:var(--accent);font-weight:600;margin-bottom:7px}
+  .post h3{font-family:var(--serif);margin:0 0 6px;font-size:23px;line-height:1.2;font-weight:600}
+  .post .by{margin:0 0 14px;font-size:15px;color:var(--muted)}
+  .route{margin:0 0 4px;padding-left:22px}
+  .route li{margin-bottom:10px;padding-left:4px}
+  .route li::marker{color:var(--accent);font-weight:700}
+  .route .k{font-size:11.5px;color:var(--faint);text-transform:uppercase;letter-spacing:.08em;
+            margin-left:8px;font-weight:600}
+  .route .note{font-size:15.5px;color:var(--muted);line-height:1.5}
+  .tips{margin:12px 0 0;font-size:15.5px;color:var(--muted);padding-left:13px;
+        border-left:2.5px solid var(--accent-soft)}
+  .post-actions{display:flex;align-items:center;gap:6px;margin-top:16px;flex-wrap:wrap}
+  .love{min-height:44px;padding:0 17px;border-radius:99px;border:1.5px solid var(--line);
+        background:transparent;color:var(--ink);font:inherit;font-size:15px;font-weight:600;
+        cursor:pointer;transition:transform .16s var(--ease),border-color .2s,background .2s}
+  .love span{font-variant-numeric:tabular-nums;color:var(--muted);margin-left:4px}
+  .love[aria-pressed=true]{border-color:var(--accent);background:var(--accent-soft);color:var(--accent)}
+  .love[aria-pressed=true] span{color:var(--accent)}
+  .love:active,button.btn:active,.seg button:active{transform:scale(.95)}
+  .quiet{border:0;background:transparent;color:var(--faint);font:inherit;font-size:14.5px;
+         min-height:44px;padding:0 10px;cursor:pointer;text-decoration:underline;
+         text-underline-offset:3px}
+  .empty{text-align:center;padding:34px 22px;color:var(--muted)}
+  .empty b{display:block;font-family:var(--serif);font-size:22px;color:var(--ink);margin-bottom:6px}
+  .account{margin-top:20px;font-size:14.5px;color:var(--faint);display:flex;
+           align-items:center;gap:4px;flex-wrap:wrap}
+  /* On a plan: what the locals said about a stop, and their best evenings. */
+  .local{margin-top:12px;padding:12px 14px;border-radius:14px;background:var(--bg2);
+         font-size:14.5px;color:var(--ok-ink);font-weight:600}
+  .local q{display:block;font-weight:400;color:var(--ink);margin-top:6px;font-size:15.5px}
+  .local small{display:block;font-weight:400;color:var(--faint);font-size:13px}
+  .insights{margin-top:18px;padding:20px}
+  .insight{padding:14px 0;border-top:1px solid var(--line)}
+  .insight:first-of-type{border-top:0;padding-top:0}
+  .insight b{font-family:var(--serif);font-size:18px;font-weight:600}
+  .insight .detail{margin-top:5px;font-size:14.5px}
+
+  /* ---- sheets ---- */
+  dialog.sheet{width:min(560px,100%);max-width:100%;max-height:92vh;max-height:92svh;
+       margin:auto auto 0;border:0;border-radius:24px 24px 0 0;
+       padding:26px 20px calc(22px + var(--safe-b));background:var(--bg);color:var(--ink);
+       overflow-y:auto;overscroll-behavior:contain}
+  dialog.sheet[open]{animation:arrive .3s var(--ease) both}
+  dialog.sheet::backdrop{background:rgba(20,12,8,.52)}
+  @media (min-width:640px){dialog.sheet{margin:auto;border-radius:24px}}
+  dialog.sheet h3{font-family:var(--serif);font-size:clamp(24px,6vw,30px);line-height:1.15;
+       margin:0 0 8px;font-weight:600;letter-spacing:-.01em}
+  dialog.sheet .say{margin-bottom:18px}
+  dialog.sheet input,dialog.sheet select,dialog.sheet textarea{font-size:16.5px;padding:13px 15px}
+  dialog.sheet textarea{min-height:92px}
+  .stop-row{border:1.5px solid var(--line);border-radius:18px;padding:12px;margin-bottom:10px;
+            background:var(--card)}
+  .stop-row .pair{margin-bottom:8px}
+  .stop-row .pair .narrow{flex:0 0 42%}
+  .stop-row .quiet{min-height:36px;padding:0 4px;margin-top:4px}
+  .c-err{color:var(--warn-ink);font-size:14.5px;margin:10px 0 0;min-height:1.2em}
+  .toast{position:fixed;z-index:60;left:50%;bottom:calc(22px + var(--safe-b));max-width:calc(100% - 32px);
+         transform:translate(-50%,16px);opacity:0;pointer-events:none;padding:13px 20px;
+         border-radius:99px;background:var(--ink);color:var(--bg);font-size:15px;font-weight:500;
+         box-shadow:0 10px 30px rgba(0,0,0,.25);transition:opacity .25s var(--ease),transform .25s var(--ease)}
+  .toast.on{opacity:1;transform:translate(-50%,0)}
 
   /* Short viewports - which is every phone. At the default sizes only two of
      the five option cards fitted on screen, so the question read as if it had
@@ -412,6 +518,11 @@
     <b>Kindling</b>
     <span class="bar"><i id="bar"></i></span>
     <span class="count" id="count"></span>
+  </div>
+
+  <div class="tabs" id="tabs" role="tablist" aria-label="Kindling" hidden>
+    <button role="tab" id="tab_plan" aria-selected="true" aria-controls="f" tabindex="0" type="button">Plan an evening</button>
+    <button role="tab" id="tab_community" aria-selected="false" aria-controls="community" tabindex="-1" type="button">Community</button>
   </div>
 
   <div class="banner" id="install">
@@ -551,7 +662,103 @@
   </div>
 
   <div id="out"></div>
+
+  <section id="community" role="tabpanel" aria-labelledby="tab_community" hidden>
+    <p class="eyebrow">Real people, real evenings</p>
+    <h2 class="c-title">What locals actually do</h2>
+    <p class="say">Evenings people have been on and would send a friend on. The planner reads these too, so the places locals love come first.</p>
+    <div class="loc">
+      <div class="loc-row">
+        <input id="c_city" placeholder="Pick a city…" autocomplete="off" aria-label="City" autocapitalize="words">
+        <button class="pin" id="c_here" type="button" title="Use my location" aria-label="Use my location">&#9678;</button>
+      </div>
+      <div class="ac" id="c_ac" role="listbox"></div>
+    </div>
+    <div class="c-bar">
+      <div class="seg" role="group" aria-label="Sort evenings">
+        <button type="button" id="c_sort_loved" aria-pressed="true">Most loved</button>
+        <button type="button" id="c_sort_new" aria-pressed="false">Newest</button>
+      </div>
+      <button class="btn" id="c_share" type="button">Share an evening</button>
+    </div>
+    <div id="c_guides"></div>
+    <div id="c_feed" aria-live="polite"></div>
+    <div class="account" id="c_account"></div>
+    <p class="foot">Shared evenings are public, under the name you choose. Three reports hide one until it is reviewed. <a href="privacy.html">Privacy</a></p>
+  </section>
 </div>
+
+<dialog class="sheet" id="d_signin" aria-labelledby="si_title">
+  <form id="signin_form" novalidate>
+    <p class="eyebrow">Community</p>
+    <h3 id="si_title">Sign in to share and react</h3>
+    <p class="say" id="si_say">We will email you a sign-in link. No password to remember.</p>
+    <div id="si_step1"><input id="si_email" type="email" inputmode="email" autocomplete="email" placeholder="you@example.com" aria-label="Email"></div>
+    <div id="si_step2" hidden><input id="si_code" inputmode="numeric" autocomplete="one-time-code" maxlength="10" placeholder="Code from the email" aria-label="Code from the email"></div>
+    <p class="c-err" id="si_err" role="alert"></p>
+    <div class="nav">
+      <button class="back" type="button" data-close aria-label="Close">&times;</button>
+      <button class="go" type="submit" id="si_go">Email me a link</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog class="sheet" id="d_name" aria-labelledby="nm_title">
+  <form id="name_form" novalidate>
+    <p class="eyebrow">Community</p>
+    <h3 id="nm_title">What should people call you?</h3>
+    <p class="say">Shown on everything you share and on the local guides list. Never your email.</p>
+    <div class="field"><label for="nm_name">Name</label><input id="nm_name" maxlength="32" autocomplete="nickname"></div>
+    <div class="field"><label for="nm_city">Home city (optional)</label><input id="nm_city" maxlength="80" autocapitalize="words"></div>
+    <p class="c-err" id="nm_err" role="alert"></p>
+    <div class="nav">
+      <button class="back" type="button" data-close aria-label="Close">&times;</button>
+      <button class="go" type="submit" id="nm_go">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog class="sheet" id="d_share" aria-labelledby="sh_title">
+  <form id="share_form" novalidate>
+    <p class="eyebrow">Share an evening</p>
+    <h3 id="sh_title">One you would send a friend on</h3>
+    <div class="field loc">
+      <label for="sh_city">City</label>
+      <input id="sh_city" placeholder="Start typing…" autocomplete="off" autocapitalize="words">
+      <div class="ac" id="sh_ac" role="listbox"></div>
+    </div>
+    <div class="field"><label for="sh_name">Call it something</label>
+      <input id="sh_name" maxlength="80" placeholder="Sunset, tapas, and a jazz cellar"></div>
+    <div class="field">
+      <label id="sh_stops_label">The stops, in order</label>
+      <div id="sh_stops" role="group" aria-labelledby="sh_stops_label"></div>
+      <button class="quiet" type="button" id="sh_add">Add a stop</button>
+    </div>
+    <div class="field"><label for="sh_stage">Good for</label>
+      <select id="sh_stage">
+        <option value="">Any stage</option>
+        <option value="first_date">First date</option>
+        <option value="getting_to_know">Getting to know</option>
+        <option value="dating">Dating</option>
+        <option value="long_term">Long term</option>
+        <option value="special_occasion">Special occasion</option>
+      </select></div>
+    <div class="pair field">
+      <div class="narrow"><label for="sh_cur">Currency</label><input id="sh_cur" maxlength="4" value="USD" autocapitalize="characters"></div>
+      <div><label for="sh_budget">Cost for two (optional)</label><input id="sh_budget" type="number" inputmode="decimal" min="0" step="5" placeholder="120"></div>
+    </div>
+    <div class="field"><label for="sh_tips">Anything worth knowing (optional)</label>
+      <textarea id="sh_tips" maxlength="600" placeholder="Book the window table. The bar gets loud after ten."></textarea></div>
+    <p class="c-err" id="sh_err" role="alert"></p>
+    <div class="nav">
+      <button class="back" type="button" data-close aria-label="Close">&times;</button>
+      <button class="go" type="submit" id="sh_go">Share it</button>
+    </div>
+    <p class="hint">Public, under your name. Each place is looked up on the map when you share, so the planner can route to it.</p>
+  </form>
+</dialog>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <script type="module" src="app.js"></script>
 </body>

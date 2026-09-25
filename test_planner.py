@@ -1975,6 +1975,42 @@ def test_static_app() -> None:
           build_js.index("closeOnTime(stops)") > build_js.index("fitWindow(stops,"))
     check("the location picker drops loose matches", "startsWith(typed)" in lib["places.js"])
 
+    # --- the community ------------------------------------------------------
+    #
+    # The browser holds the anon key, so the database's row-level security is
+    # the only real protection. A table without it is readable and writable by
+    # anyone who opens the page.
+    config = (docs / "config.js").read_text(encoding="utf-8")
+    check("config.js never holds the service_role key", "service_role" not in config.replace(
+        "Never put the service_role", "")
+          and not _re.search(r"eyJ[^'\"]*c2VydmljZV9yb2xl", config))
+    schema = (Path(__file__).resolve().parent / "supabase" / "schema.sql").read_text(encoding="utf-8")
+    tables = _re.findall(r"create table if not exists public\.(\w+)", schema)
+    unguarded = [t for t in tables if f"alter table public.{t} enable row level security" not in schema]
+    check("every community table has row-level security", tables and not unguarded, str(unguarded))
+    check("every community view runs with the reader's rights",
+          all("security_invoker = on" in v
+              for v in _re.findall(r"create or replace view[^\n]+", schema)))
+    check("counters are set by the database, not the poster",
+          "new.love_count   := 0" in schema and "new.hidden       := false" in schema)
+    check("nobody can love their own evening", "i.author_id = auth.uid()" in schema)
+    check("three reports hide an evening", "r.n >= 3" in schema)
+    check("who loved what is private", "for select using (true)" not in
+          schema[schema.index("create table if not exists public.reactions"):schema.index("create or replace function public.reactions_count")])
+    tab = (docs / "community-tab.js").read_text(encoding="utf-8")
+    comm = lib["community.js"]
+    check("the community tab stays hidden without a backend", "if (!C.enabled) return;" in tab)
+    check("the planner never waits long for the locals", "setTimeout(() => no(new Error('slow'))" in comm)
+    check("a sign-in link is wiped from the address bar", "history.replaceState" in comm)
+    check("a wrong sign-in code is not mistaken for signing out",
+          comm.index("otp_expired") < comm.index("status === 403"))
+    check("the guide rule on the page matches the database",
+          "GUIDE_POSTS = 3" in comm and "GUIDE_LOVES = 10" in comm
+          and "count(*) >= 3 and sum(i.love_count) >= 10" in schema)
+    check("community text is escaped before it is shown", tab.count("esc(p.") >= 4)
+    check("the privacy page exists and is linked",
+          (docs / "privacy.html").exists() and 'href="privacy.html"' in index)
+
     # An invented affiliate tag does not earn money - it breaks the link and
     # can close the account.
     partners = _re.search(r"PARTNERS = \{([^}]*)\}", lib["links.js"]).group(1)

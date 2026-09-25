@@ -1,6 +1,8 @@
 import * as places from './lib/places.js';
 import * as wx from './lib/weather.js';
+import * as community from './lib/community.js';
 import { build, STAGES, STYLES, TRANSPORT, walkTime, endOf } from './lib/plan.js';
+import { initCommunity, openCommunity } from './community-tab.js';
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -354,11 +356,15 @@ async function submit() {
     }
 
     working('Checking the forecast');
+    // What locals shared around here, asked for alongside the forecast. It
+    // never fails and never waits long: without it the plan is simply made
+    // from map data alone.
+    const asking = community.localPicks(prefs.lat, prefs.lon);
     const weather = prefs.weatherText
       ? wx.parseOverride(prefs.weatherText)
       : await wx.forecast(prefs.lat, prefs.lon, prefs.date);
 
-    const plan = await build(prefs, weather, working);
+    const plan = await build(prefs, weather, working, await asking);
 
     const data = { plan, prefs, weather, saved: Date.now() };
     show(data);
@@ -455,6 +461,11 @@ function show(d) {
         + `</div>` : '';
     const kind = s.venueKind ? `<span class="kind">${esc(s.venueKind)}</span>` : '';
     const blurb = s.blurb ? `<div class="blurb">${esc(s.blurb)}</div>` : '';
+    const local = s.locals ? `<div class="local">Recommended by ${
+        s.locals.posts === 1 ? 'a local' : `${s.locals.posts} locals`}${
+        s.locals.loves ? ` &middot; ${s.locals.loves} ${s.locals.loves === 1 ? 'love' : 'loves'}` : ''}${
+        (s.locals.notes || []).map(n => `<q>${esc(n.note)}</q><small>${esc(n.author)}${
+          n.guide ? ', local guide' : ''}</small>`).join('')}</div>` : '';
 
     const facts = [s.cuisine, walkTime(s)].filter(Boolean);
     const bits = [];
@@ -478,6 +489,7 @@ function show(d) {
         ${kind}
         <h3>${esc(s.name)}</h3>
         <p class="why">${esc(s.why)}</p>
+        ${local}
         ${blurb}
         ${bits.join('')}
         <div class="links">${links.join('')}</div>
@@ -493,6 +505,23 @@ function show(d) {
     ? `<div class="card warn"><h4>Check before you commit</h4><ul>${
         p.warnings.map(w => `<li>${esc(w)}</li>`).join('')}</ul></div>` : '';
 
+  // Real People's Insights: evenings locals shared near here. With none yet,
+  // ask for one - that is how a city's first local picks arrive.
+  const where = esc((prefs.location || '').split(',')[0]);
+  const insights = p.insights?.length
+    ? `<div class="card insights"><h4>Real People's Insights</h4>${p.insights.map(i => `
+        <div class="insight"><b>${esc(i.title)}</b>
+          <div class="detail">by ${esc(i.author)}${i.guide ? ' <span class="badge">Local guide</span>' : ''}
+            &middot; &#9829; ${i.loves}</div>
+          <div class="detail">${esc(i.stops.join(' → '))}</div></div>`).join('')}
+        ${community.enabled ? '<button class="btn ghost" type="button" id="locals_more" style="margin-top:14px">More from locals</button>' : ''}
+      </div>`
+    : community.enabled
+      ? `<div class="card insights"><h4>Real People's Insights</h4>
+          <p class="detail" style="margin-top:0">Nobody has shared an evening around ${where} yet. Been somewhere good? The planner will start sending people there.</p>
+          <button class="btn ghost" type="button" id="locals_share" style="margin-top:12px">Share an evening</button></div>`
+      : '';
+
   $('#out').innerHTML = `
     <div class="hero">
       <p class="eyebrow">${head}</p>
@@ -504,11 +533,20 @@ function show(d) {
       wx.isKnown(d.weather) ? `<br>Forecast: ${esc(wx.brief(d.weather))}` : ''}</div>
     ${stops}
     ${warn}
+    ${insights}
     <div class="card" style="margin-top:18px">${notes}</div>
     <p class="foot">Places and hours from <b>OpenStreetMap</b> contributors; photographs
-      from <b>Wikipedia</b>. Booking links may earn a commission. Everything here is an
-      estimate &mdash; check before you go.</p>
+      from <b>Wikipedia</b>${community.enabled ? '; local picks from the <b>Kindling community</b>' : ''}.
+      Booking links may earn a commission. Everything here is an
+      estimate &mdash; check before you go.${community.enabled ? ' <a href="privacy.html">Privacy</a>' : ''}</p>
     <button class="go" type="button" id="again" style="margin-top:20px">Plan another</button>`;
+
+  const here = prefs.lat != null
+    ? { label: (prefs.location || '').split(',')[0], detail: (prefs.location || '').split(',').slice(1).join(',').trim(),
+        lat: prefs.lat, lon: prefs.lon }
+    : null;
+  $('#locals_more')?.addEventListener('click', () => openCommunity(here));
+  $('#locals_share')?.addEventListener('click', () => openCommunity(here, 'share'));
 
   revealTiles();
   deck.hidden = true;
@@ -577,3 +615,18 @@ bNum.addEventListener('input', () => {
 $('#currency').addEventListener('input', e =>
   $('#cur_out').textContent = (e.target.value || 'USD').toUpperCase());
 $('#hours').addEventListener('input', e => $('#hours_out').textContent = e.target.value);
+
+/* ---- community tab --------------------------------------------------- */
+initCommunity({
+  // Open the community on wherever the last plan was, if there was one.
+  planLocation() {
+    let saved = null;
+    try { saved = JSON.parse(localStorage.getItem(LAST_PLAN) || 'null'); } catch {}
+    const p = saved?.prefs;
+    if (p?.lat == null) return null;
+    const [label, ...rest] = String(p.location || '').split(',');
+    return { label: label.trim(), detail: rest.join(',').trim(), lat: p.lat, lon: p.lon };
+  },
+  // The deck was display:none while the other tab was up, so its height is stale.
+  onPlanShown() { measure(); affordance(); },
+});

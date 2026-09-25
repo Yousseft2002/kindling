@@ -62,6 +62,13 @@ const PACE = {
 /* Nobody takes a car or waits for a tram to go somewhere this close. */
 const JUST_WALK = 12;
 
+/* The badge on a card for a place that came from the community rather than
+ * the map search, by the kind of stop it was shared as. */
+const LOCAL_KIND = {
+  drinks: 'Bar', coffee: 'Café', food: 'Restaurant', music: 'Live music', show: 'Show',
+  activity: 'Museum or gallery', aquarium: 'Aquarium', viewpoint: 'Viewpoint', shopping: 'Shop',
+};
+
 /* Minutes and share of budget per slot. Dinner gets the money and the time;
  * everything else is there to make dinner better. */
 const SHAPE = {
@@ -167,9 +174,12 @@ export function slotsFor(prefs, weather) {
 
 /* --- building it ------------------------------------------------------ */
 
-export async function build(prefs, weather, onPhase = () => {}) {
+/** `locals` is what the community shared near here - see localPicks() in
+ *  community.js. Optional: without it this is the plain map-data planner. */
+export async function build(prefs, weather, onPhase = () => {}, locals = null) {
   const stage = STAGES[prefs.stage] || STAGES.getting_to_know;
   const slots = slotsFor(prefs, weather);
+  const known = new Map((locals?.picks || []).map(p => [p.name.toLowerCase(), p]));
 
   let t = mins(prefs.startTime) ?? 17 * 60;
   const gh = wx.goldenHour(weather);
@@ -198,11 +208,13 @@ export async function build(prefs, weather, onPhase = () => {}) {
     // always ends the night, so it has to stay open to the end of it.
     const needUntil = slot === 'food' ? t + minutes : opening + 30;
     const hits = await nearby(slot, prefs.lat, prefs.lon, prefs.transport, 6);
-    const venue = pick(hits, used, { from, needUntil });
+    const venue = pick(withLocals(hits, slot, locals, prefs), used, { from, needUntil, known });
     if (venue) from = venue;
 
     const stop = venue ? realStop(slot, venue, prefs, t, minutes, cost, last)
                        : placeholder(slot, prefs, t, minutes, cost, last);
+    const said = venue && known.get(venue.name.toLowerCase());
+    if (said) stop.locals = { posts: said.posts, loves: said.loves, notes: said.notes.slice(0, 2) };
     // An unfillable slot produces the same sentence every time, so two of
     // them read as "somewhere with live music near Boston" twice - which is
     // the app looking broken rather than looking honest. Skip the repeat and
@@ -249,6 +261,12 @@ export async function build(prefs, weather, onPhase = () => {}) {
     wear: wear(prefs, weather),
     backup: `${named[0] || where} is the one to check before you leave - opening hours `
           + `move, and everything else here is close enough to swap at short notice.`,
+    // Real People's Insights: the best-loved evenings locals shared near here,
+    // kept on the plan so they are still there offline.
+    insights: (locals?.posts || []).slice(0, 3).map(p => ({
+      id: p.id, title: p.title, author: p.author_name, guide: !!p.author_is_guide,
+      loves: p.love_count || 0, city: p.city, stops: (p.stops || []).map(s => s.name),
+    })),
   };
 
   attachLinks(plan, prefs.location);
@@ -262,14 +280,36 @@ export async function build(prefs, weather, onPhase = () => {}) {
  *  museum that closes at four and a lunch counter that closes at five. Then
  *  published hours - a decent proxy for a place someone maintains - and then
  *  the nearest to the last stop, so the evening is a route, not a scatter. */
-export function pick(candidates, used, { from = null, needUntil = null } = {}) {
+export function pick(candidates, used, { from = null, needUntil = null, known = null } = {}) {
   const shut = c => closesAt(c.openingHours);
   const fresh = candidates.filter(c => !used.has(c.name.toLowerCase()))
     .filter(c => needUntil == null || shut(c) == null || shut(c) >= needUntil);
   if (!fresh.length) return null;
   const away = c => (from && c.lat != null) ? distanceKm(c.lat, c.lon, from.lat, from.lon) : 0;
+  // Somewhere locals shared and loved beats anything the map search can
+  // infer from tags - that is the whole point of asking them.
+  const liked = c => {
+    const p = known?.get(c.name.toLowerCase());
+    return p ? 1 + p.posts + p.loves : 0;
+  };
   return fresh.sort((a, b) =>
-    ((a.openingHours ? 0 : 1) - (b.openingHours ? 0 : 1)) || (away(a) - away(b)))[0];
+    (liked(b) - liked(a))
+    || ((a.openingHours ? 0 : 1) - (b.openingHours ? 0 : 1))
+    || (away(a) - away(b)))[0];
+}
+
+/** The map search's candidates plus places locals shared as this kind of
+ *  stop, so the planner can route to one the search never returned. Only
+ *  shared places with coordinates, and only within reach. */
+export function withLocals(hits, slot, locals, prefs) {
+  const reach = RADIUS_KM[prefs.transport] ?? 8;
+  const have = new Set(hits.map(h => h.name.toLowerCase()));
+  const extra = (locals?.picks || [])
+    .filter(p => p.kind === slot && p.lat != null && !have.has(p.name.toLowerCase())
+      && prefs.lat != null && distanceKm(p.lat, p.lon, prefs.lat, prefs.lon) <= reach)
+    .map(p => ({ name: p.name, lat: p.lat, lon: p.lon, kind: LOCAL_KIND[slot] || 'Local pick',
+                 cuisine: '', openingHours: '', website: '', address: '' }));
+  return [...hits, ...extra];
 }
 
 function realStop(slot, v, prefs, t, minutes, cost, last) {
