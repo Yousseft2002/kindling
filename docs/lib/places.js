@@ -204,7 +204,16 @@ function toVenue(r) {
     liveMusic: ex.live_music === 'yes',
     website: ex.website || ex['contact:website'] || '',
     address: [street || within, town].filter(Boolean).join(', '),
+    diet: dietOf(ex),
   };
+}
+
+/* What a kitchen says it caters for. OpenStreetMap's `diet:*` tags - "yes",
+ * "only" or "limited" - which Nominatim returns with extratags=1. Sparse: most
+ * restaurants carry none, so an untagged place is unknown, never "no". */
+export const DIETS = ['vegetarian', 'vegan', 'gluten_free', 'halal', 'kosher'];
+function dietOf(ex) {
+  return DIETS.filter(d => ['yes', 'only', 'limited'].includes(String(ex['diet:' + d] || '').toLowerCase()));
 }
 
 const box = (t, slot) => Math.max(BOX[t] ?? DEFAULT_BOX, OUTDOORS.has(slot) ? OUTDOOR_BOX : 0);

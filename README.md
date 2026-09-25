@@ -204,6 +204,52 @@ dress code both answers and advances, so most of the flow is one tap.
 - Display type is Fraunces from Google Fonts, with Georgia behind it. It
   degrades cleanly if the request fails.
 
+### Cinematic Velvet
+
+The look is dark and intimate on purpose: charcoal with a breath of plum
+(`#0D0C10`), glass cards (`#1A1821` at 62%, 20px blur, 24px corners, an 8%
+white hairline) over slow, layered glows, **electric coral `#FF477E` for
+anything you can press**, and **champagne `#F1E4C3` for the planner's own
+voice** — the pitch, each stop's reasoning, section labels. Coral buttons carry
+dark text (`#1B0710`, 6:1) rather than white (3.2:1). Maps are OpenStreetMap
+tiles run through one SVG filter (`#night` in `index.html`) that maps their
+brightness onto plum, so streets glow faintly on dark ground.
+
+Three pieces of motion, all in `docs/ui/`, none from a library:
+
+- **The Unfolding Invitation** (`invitation.js`). While the plan builds, an
+  invitation outline draws itself and the evening's parts rise into it on a
+  spring (mass 1, tension 120, friction 14): place → forecast → each venue by
+  name, the moment it is chosen → the route. Every card is driven by the
+  planner's real progress (`build(…, onPhase)` now also reports each venue
+  found), and the flap lifts when the plan is ready. Never shorter than 1.6s,
+  so a cached plan still reads as made rather than flashed.
+- **Itinerary-to-Hero** (`hero.js`). The plan is a timeline; tapping a stop
+  grows its thumbnail into a full-bleed header (uniform scale plus a clip, so
+  a photo is never stretched) while the rest of the timeline sinks back. No
+  new screen: back — the button, Escape, or the phone's back gesture — morphs
+  it into the row again. 60% of the screen is the place; 40% is times, cost,
+  the reasoning, and Book / Directions / Swap.
+- **The swap deck** (`swap.js`). Each stop keeps the planner's runners-up for
+  its slot (`stop.alts`, up to five). "Swap this stop" opens a 3D deck: native
+  scroll-snap does the physics, and each card's scale (0.9 off-centre),
+  opacity, turn and shadow come from its distance to the centre every frame.
+  The transform goes on an inner element — Chrome snaps to the *transformed*
+  box, and a transform that depends on scroll position then chases itself.
+  `swapStop()` in `plan.js` keeps the slot's length and budget, re-measures
+  the walks, re-runs every check, and makes the old stop an alternative so a
+  swap can be undone.
+
+`spring.js` bakes a damped spring into Web Animations keyframes, so springs
+run on the compositor while the main thread is busy planning. Every animation
+honours `prefers-reduced-motion`.
+
+**Tune the night** sits under the timeline: budget, start time, length and
+dietary needs, then *Re-plan*. Dietary needs are real filters: `places.js`
+reads OpenStreetMap's `diet:*` tags, dinner prefers a kitchen tagged for all
+of them, and one the map cannot vouch for gets a "call ahead" warning rather
+than a promise — most restaurants carry no diet tags at all.
+
 Installable, and offline it opens to your last plan from `localStorage` — the
 actual failure case is standing outside a bar with one bar of signal trying to
 remember which street the next stop is on. It will not plan a *new* date
@@ -215,7 +261,13 @@ without signal, and says so. The icons are generated, not hand-drawn:
 ```
 docs/                 the app — this is what GitHub Pages serves
   index.html          shell, styles, the deck
-  app.js              screens, transitions, results, the map
+  app.js              screens, transitions, planning, wiring the results
+  ui/spring.js        spring physics baked into Web Animations keyframes
+  ui/tiles.js         route map, single-place map visuals, tile reveal
+  ui/invitation.js    the loading sequence
+  ui/results.js       the plan page and the tune panel
+  ui/hero.js          a stop opened into a full-screen detail view
+  ui/swap.js          the 3D alternatives deck
   lib/net.js          fetch, session cache, the Nominatim rate gate
   lib/places.js       geocoding, category search, venue lookup, noise filter
   lib/weather.js      forecast, golden hour, typed overrides
@@ -228,6 +280,8 @@ docs/                 the app — this is what GitHub Pages serves
   privacy.html        what is stored and the house rules
   sw.js               offline shell
 supabase/schema.sql   the community's tables and every rule protecting them
+tools/mock-fetch.js   offline stand-in for every public API, for tests and screenshots
+tools/plan.test.mjs   Node tests for alternatives, swapping and diets (node tools/plan.test.mjs)
 ```
 
 ---

@@ -1,8 +1,14 @@
 import * as places from './lib/places.js';
 import * as wx from './lib/weather.js';
 import * as community from './lib/community.js';
-import { build, STAGES, STYLES, TRANSPORT, ADVENTURE, walkTime, endOf } from './lib/plan.js';
+import { build, swapStop, photograph, STAGES, STYLES, TRANSPORT, ADVENTURE } from './lib/plan.js';
 import { initCommunity, openCommunity } from './community-tab.js';
+import { openInvitation } from './ui/invitation.js';
+import { openStop, refreshStop, close as closeStop, isOpen as stopOpen } from './ui/hero.js';
+import { openSwap } from './ui/swap.js';
+import { planHtml, wireTune } from './ui/results.js';
+import { revealTiles } from './ui/tiles.js';
+import { springTo } from './ui/spring.js';
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -286,6 +292,31 @@ function syncChips() {
 }
 $('#interests').addEventListener('input', syncChips);
 
+/* ---- dietary needs ----------------------------------------------------
+   Real filters, not decoration: they steer dinner towards kitchens that
+   OpenStreetMap says cater for them, and a stop the map cannot vouch for
+   gets a "call ahead" rather than a false promise. */
+const DIET = { vegetarian: 'Vegetarian', vegan: 'Vegan', gluten_free: 'Gluten-free', halal: 'Halal' };
+for (const [k, label] of Object.entries(DIET)) {
+  const el = document.createElement('button');
+  el.type = 'button'; el.className = 'chip'; el.textContent = label; el.dataset.diet = k;
+  el.setAttribute('aria-pressed', 'false');
+  el.onclick = () => {
+    const on = el.getAttribute('aria-pressed') !== 'true';
+    el.setAttribute('aria-pressed', String(on));
+    el.classList.toggle('on', on);
+    $('#diet').value = [...document.querySelectorAll('#diets [aria-pressed=true]')].map(b => b.dataset.diet).join(',');
+  };
+  $('#diets').appendChild(el);
+}
+function setDiet(list = []) {
+  $('#diet').value = list.join(',');
+  document.querySelectorAll('#diets [data-diet]').forEach(b => {
+    const on = list.includes(b.dataset.diet);
+    b.setAttribute('aria-pressed', String(on)); b.classList.toggle('on', on);
+  });
+}
+
 /* ---- location --------------------------------------------------------
    Two ways in, both ending at coordinates. Coordinates are what make the
    suggestions local: the name alone leaves it guessing which Springfield. */
@@ -401,18 +432,25 @@ function readForm() {
     weatherText: (f.weather || '').trim(),
     adventure: parseInt(f.adventure, 10) || 2,
     localOnly: f.local_only === '1',
+    diet: (f.diet || '').split(',').filter(Boolean),
   };
 }
 
-async function submit() {
+let current = null;       // the plan on screen: { plan, prefs, weather, saved }
+
+function submit() { return run(readForm()); }
+
+/** Build an evening from a set of answers, behind the invitation. */
+async function run(prefs) {
   const btn = $('#go');
   btn.disabled = true;
   $('#stale').classList.remove('on');
-  working('Finding the place');
+  closeStop();
+  const invite = openInvitation(prefs.location);
+  const phase = (label, info) => { working(label); invite.phase(label, info); };
+  phase('Finding the place');
 
   try {
-    const prefs = readForm();
-
     // Resolve the location to a point if the picker was not used.
     if (prefs.lat == null || prefs.lon == null) {
       const hit = await places.locate(prefs.location);
@@ -426,8 +464,9 @@ async function submit() {
     if (prefs.lat == null) {
       throw new Error(`Could not find "${prefs.location}" on the map. Try a nearby town or city.`);
     }
+    invite.note('place', `Anchored on ${prefs.location.split(',')[0]}`);
 
-    working('Checking the forecast');
+    phase('Checking the forecast');
     // What locals shared around here, asked for alongside the forecast. It
     // never fails and never waits long: without it the plan is simply made
     // from map data alone.
@@ -435,13 +474,17 @@ async function submit() {
     const weather = prefs.weatherText
       ? wx.parseOverride(prefs.weatherText)
       : await wx.forecast(prefs.lat, prefs.lon, prefs.date);
+    invite.note('weather', wx.isKnown(weather) ? wx.brief(weather) : 'No forecast yet - planned for any sky');
 
-    const plan = await build(prefs, weather, working, await asking);
+    const plan = await build(prefs, weather, phase, await asking);
+    invite.note('route', `${plan.stops.length} stops, ${plan.transportNote.split(' - ')[0].toLowerCase()}`);
+    await invite.done();
 
     const data = { plan, prefs, weather, saved: Date.now() };
     show(data);
-    try { localStorage.setItem(LAST_PLAN, JSON.stringify(data)); } catch {}
+    save(data);
   } catch (err) {
+    invite.fail();
     $('#out').classList.add('on');
     document.body.classList.add('done');
     deck.hidden = true; affordance();
@@ -455,165 +498,22 @@ async function submit() {
   }
 }
 
-/* ---- route map -------------------------------------------------------
-   A slippy map is about fifteen lines of Web Mercator, so there is no
-   mapping library here: pick the zoom that fits every stop, lay the tiles
-   that cover the frame, and put a numbered pin on each venue. */
-function routeMap(stops, height) {
-  const pts = stops.map((s, i) => ({s, i})).filter(o => o.s.lat != null && o.s.lon != null);
-  if (pts.length < 2) return '';
-
-  const W = Math.min(680, Math.max(280, ($('.wrap')?.clientWidth || 640) - 4));
-  const H = height, TILE = 256, PAD = 42;
-  const projX = (lon, z) => (lon + 180) / 360 * 2 ** z * TILE;
-  const projY = (lat, z) => {
-    const r = lat * Math.PI / 180;
-    return (1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * 2 ** z * TILE;
-  };
-
-  let z = 18;
-  for (; z > 2; z--) {
-    const xs = pts.map(o => projX(o.s.lon, z)), ys = pts.map(o => projY(o.s.lat, z));
-    if (Math.max(...xs) - Math.min(...xs) <= W - PAD * 2 &&
-        Math.max(...ys) - Math.min(...ys) <= H - PAD * 2) break;
-  }
-
-  const xs = pts.map(o => projX(o.s.lon, z)), ys = pts.map(o => projY(o.s.lat, z));
-  const left = (Math.max(...xs) + Math.min(...xs)) / 2 - W / 2;
-  const top = (Math.max(...ys) + Math.min(...ys)) / 2 - H / 2;
-  const span = 2 ** z;
-
-  let tiles = '';
-  for (let tx = Math.floor(left / TILE); tx <= Math.floor((left + W) / TILE); tx++) {
-    for (let ty = Math.floor(top / TILE); ty <= Math.floor((top + H) / TILE); ty++) {
-      if (ty < 0 || ty >= span) continue;              // above the pole
-      const wrapped = ((tx % span) + span) % span;     // across the date line
-      // No loading="lazy": inside a short clipped box the browser decides
-      // most tiles are off-screen and never fetches them.
-      tiles += `<img src="https://tile.openstreetmap.org/${z}/${wrapped}/${ty}.png" `
-             + `alt="" style="left:${tx * TILE - left}px;top:${ty * TILE - top}px">`;
-    }
-  }
-  const pins = pts.map(o =>
-    `<div class="pin" title="${esc(o.s.name)}" style="left:${projX(o.s.lon, z) - left}px;`
-    + `top:${projY(o.s.lat, z) - top}px">${o.i + 1}</div>`).join('');
-
-  return `<div class="map" style="height:${H}px"><div class="tiles">${tiles}</div>${pins}`
-       + `<div class="credit">&copy; <a href="https://www.openstreetmap.org/copyright" `
-       + `target="_blank" rel="noopener">OpenStreetMap</a></div></div>`;
+function put(id, v) {
+  const el = document.getElementById(id);
+  if (el && v != null && v !== '') el.value = v;
 }
 
-function revealTiles() {
-  // A cached tile finishes before any handler is attached, so `complete` has
-  // to be checked as well as listened for - otherwise the second plan you
-  // make has an invisible map.
-  for (const img of document.querySelectorAll('.map img')) {
-    if (img.complete && img.naturalWidth > 0) img.classList.add('on');
-    else img.addEventListener('load', () => img.classList.add('on'), {once: true});
-    img.addEventListener('error', () => img.classList.add('on'), {once: true});
-  }
+function save(data) {
+  try { localStorage.setItem(LAST_PLAN, JSON.stringify(data)); } catch {}
 }
 
 /* ---- results ---------------------------------------------------------- */
-function show(d) {
-  const p = d.plan, prefs = d.prefs, cur = prefs.currency;
-  const money = n => n > 0 ? `${cur} ${Math.round(n)}` : 'Free';
-  const when = prefs.date
-    ? new Date(prefs.date + 'T12:00').toLocaleDateString(undefined,
-        {weekday: 'long', day: 'numeric', month: 'long'}) : '';
-  const head = [prefs.location, when, p.adventure, prefs.localOnly ? 'Local only' : '',
-    `${cur} ${Math.round(p.totalCost)} for two`]
-    .filter(Boolean).join(' &middot; ');
+function show(d, { quiet = false } = {}) {
+  current = d;
+  const out = $('#out');
+  out.innerHTML = planHtml(d, { community: community.enabled });
 
-  const mapHtml = routeMap(p.stops, 240);
-
-  const stops = p.stops.map((s, i) => {
-    const shot = s.photo
-      ? `<div class="shot"><img src="${esc(s.photo)}" alt="" loading="lazy">`
-        + (s.photoCredit ? `<a class="src" href="${esc(s.photoCredit)}" target="_blank" rel="noopener">Wikipedia</a>` : '')
-        + `</div>` : '';
-    const kind = s.venueKind ? `<span class="kind">${esc(s.venueKind)}</span>` : '';
-    const blurb = s.blurb ? `<div class="blurb">${esc(s.blurb)}</div>` : '';
-    const local = s.locals ? `<div class="local">Recommended by ${
-        s.locals.posts === 1 ? 'a local' : `${s.locals.posts} locals`}${
-        s.locals.loves ? ` &middot; ${s.locals.loves} ${s.locals.loves === 1 ? 'love' : 'loves'}` : ''}${
-        (s.locals.notes || []).map(n => `<q>${esc(n.note)}</q><small>${esc(n.author)}${
-          n.guide ? ', local guide' : ''}</small>`).join('')}</div>` : '';
-
-    const facts = [s.cuisine, walkTime(s)].filter(Boolean);
-    const bits = [];
-    if (facts.length) bits.push(`<div class="detail">${esc(facts.join(' · '))}</div>`);
-    if (s.address) bits.push(`<div class="detail"><b>Address:</b> ${esc(s.address)}</div>`);
-    if (s.openingHours) bits.push(`<div class="detail"><b>Hours:</b> ${esc(s.openingHours)}</div>`);
-    if (s.website) bits.push(`<div class="detail"><b>Site:</b> <a href="${esc(s.website)}" `
-      + `target="_blank" rel="noopener">${esc(s.website.replace(/^https?:\/\//, '').slice(0, 40))}</a></div>`);
-    if (s.tip) bits.push(`<div class="detail"><b>Tip:</b> ${esc(s.tip)}</div>`);
-    if (s.booking) bits.push(`<div class="detail"><b>Booking:</b> ${esc(s.booking)}</div>`);
-    if (!s.indoor && s.fallback) bits.push(`<div class="detail"><b>If it rains:</b> ${esc(s.fallback)}</div>`);
-
-    const links = [];
-    if (s.bookUrl) links.push(`<a class="btn" href="${esc(s.bookUrl)}" target="_blank" rel="noopener">Book</a>`);
-    if (s.mapUrl) links.push(`<a class="btn ghost" href="${esc(s.mapUrl)}" target="_blank" rel="noopener">`
-      + `${s.verified ? 'Open in Maps' : 'Map'}</a>`);
-
-    return `<div class="card stop" style="animation-delay:${Math.min(i * 55, 220)}ms">
-        ${shot}
-        <div class="meta">${i + 1} &middot; ${esc(s.start)}–${esc(endOf(s))} &middot; ${money(s.cost)}</div>
-        ${kind}
-        <h3>${esc(s.name)}</h3>
-        <p class="why">${esc(s.why)}</p>
-        ${local}
-        ${blurb}
-        ${bits.join('')}
-        <div class="links">${links.join('')}</div>
-      </div>` + (s.travelNext ? `<div class="travel">&darr;&nbsp; ${esc(s.travelNext)}</div>` : '');
-  }).join('');
-
-  const notes = [['When', p.timing], ['Wear', p.wear], ['Getting around', p.transportNote],
-                 ['Weather', p.weatherCall], ['If it breaks', p.backup]]
-    .filter(([, v]) => v)
-    .map(([k, v]) => `<div class="detail"><b>${k}:</b> ${esc(v)}</div>`).join('');
-
-  const warn = p.warnings?.length
-    ? `<div class="card warn"><h4>Check before you commit</h4><ul>${
-        p.warnings.map(w => `<li>${esc(w)}</li>`).join('')}</ul></div>` : '';
-
-  // Real People's Insights: evenings locals shared near here. With none yet,
-  // ask for one - that is how a city's first local picks arrive.
-  const where = esc((prefs.location || '').split(',')[0]);
-  const insights = p.insights?.length
-    ? `<div class="card insights"><h4>Real People's Insights</h4>${p.insights.map(i => `
-        <div class="insight"><b>${esc(i.title)}</b>
-          <div class="detail">by ${esc(i.author)}${i.guide ? ' <span class="badge">Local guide</span>' : ''}
-            &middot; &#9829; ${i.loves}</div>
-          <div class="detail">${esc(i.stops.join(' → '))}</div></div>`).join('')}
-        ${community.enabled ? '<button class="btn ghost" type="button" id="locals_more" style="margin-top:14px">More from locals</button>' : ''}
-      </div>`
-    : community.enabled
-      ? `<div class="card insights"><h4>Real People's Insights</h4>
-          <p class="detail" style="margin-top:0">Nobody has shared an evening around ${where} yet. Been somewhere good? The planner will start sending people there.</p>
-          <button class="btn ghost" type="button" id="locals_share" style="margin-top:12px">Share an evening</button></div>`
-      : '';
-
-  $('#out').innerHTML = `
-    <div class="hero">
-      <p class="eyebrow">${head}</p>
-      <h2>${esc(p.title)}</h2>
-      <p class="pitch">${esc(p.pitch)}</p>
-    </div>
-    ${mapHtml}
-    <div class="arc"><b>${esc(p.stops.map(s => s.name).join(' → '))}</b>${
-      wx.isKnown(d.weather) ? `<br>Forecast: ${esc(wx.brief(d.weather))}` : ''}</div>
-    ${stops}
-    ${warn}
-    ${insights}
-    <div class="card" style="margin-top:18px">${notes}</div>
-    <p class="foot">Places and hours from <b>OpenStreetMap</b> contributors; photographs
-      from <b>Wikipedia</b>${community.enabled ? '; local picks from the <b>Kindling community</b>' : ''}.
-      Booking links may earn a commission. Everything here is an
-      estimate &mdash; check before you go.${community.enabled ? ' <a href="privacy.html">Privacy</a>' : ''}</p>
-    <button class="go" type="button" id="again" style="margin-top:20px">Plan another</button>`;
-
+  const prefs = d.prefs;
   const here = prefs.lat != null
     ? { label: (prefs.location || '').split(',')[0], detail: (prefs.location || '').split(',').slice(1).join(',').trim(),
         lat: prefs.lat, lon: prefs.lon }
@@ -621,16 +521,27 @@ function show(d) {
   $('#locals_more')?.addEventListener('click', () => openCommunity(here));
   $('#locals_share')?.addEventListener('click', () => openCommunity(here, 'share'));
 
-  revealTiles();
+  out.querySelectorAll('.row').forEach(r => r.addEventListener('click', () => openRow(+r.dataset.i)));
+  wireTune(out, prefs, changes => {
+    const next = { ...prefs, ...changes };
+    // Keep the question deck in step, so "Plan another" starts from here.
+    put('budget', next.budget); put('start_time', next.startTime); put('hours', next.hours);
+    $('#budget_range').value = next.budget; $('#budget_out').textContent = Math.round(next.budget);
+    $('#hours_out').textContent = next.hours;
+    setDiet(next.diet);
+    run(next);
+  });
+
+  revealTiles(out);
   deck.hidden = true;
   affordance();
   $('#nav').style.display = 'none';
   document.body.classList.add('done');
-  $('#out').classList.add('on');
+  out.classList.add('on');
   $('#bar').style.width = '100%';
   $('#count').textContent = '';
   $('#again').onclick = () => {
-    $('#out').classList.remove('on');
+    out.classList.remove('on');
     deck.hidden = false;
     $('#nav').style.display = '';
     document.body.classList.remove('done');
@@ -638,7 +549,46 @@ function show(d) {
     affordance();
     go(1);
   };
-  scrollTo({top: 0, behavior: REDUCED ? 'auto' : 'smooth'});
+  if (!quiet) scrollTo({top: 0, behavior: 'auto'});
+}
+
+/* ---- a stop, opened -------------------------------------------------- */
+const rowFor = i => document.querySelector(`#out .row[data-i="${i}"]`);
+
+function stopCtx(i) {
+  const s = current.plan.stops[i], cur = current.prefs.currency;
+  return {
+    index: i, stop: s, rowFor,
+    money: n => n > 0 ? `${cur} ${Math.round(n)}` : 'Free',
+    canSwap: !!(s.slot && s.alts?.length),
+    onSwap: swapAt,
+  };
+}
+
+function openRow(i) { openStop(stopCtx(i)); }
+
+function swapAt(i) {
+  const s = current.plan.stops[i];
+  openSwap({
+    stop: s, index: i, alts: s.alts || [],
+    async onPick(venue) {
+      swapStop(current.plan, i, venue, current.prefs, current.weather);
+      current.saved = Date.now();
+      show(current, { quiet: true });
+      if (stopOpen()) refreshStop(stopCtx(i));
+      save(current);
+      // A photograph, if the new place has one - it arrives when it arrives.
+      const before = current.plan.stops[i].photo;
+      await photograph(current.plan.stops[i]);
+      if (current.plan.stops[i].photo !== before) {
+        save(current);
+        show(current, { quiet: true });
+        if (stopOpen()) refreshStop(stopCtx(i));
+      }
+      const row = rowFor(i);
+      if (row && !stopOpen()) springTo(row, { scale: 0.96 }, { scale: 1 }, { tension: 220, friction: 16 });
+    },
+  });
 }
 
 /* ---- opening state ---------------------------------------------------
@@ -653,12 +603,12 @@ function show(d) {
   if (!saved?.plan) return;
 
   const p = saved.prefs || {};
-  const put = (id, v) => { const el = document.getElementById(id); if (el && v != null && v !== '') el.value = v; };
   put('location', p.location); put('budget', p.budget); put('currency', p.currency);
   put('relationship_stage', p.stage); put('clothing_style', p.style);
   put('transportation', p.transport); put('hours', p.hours);
   put('party_note', p.note); put('lat', p.lat); put('lon', p.lon);
   put('adventure', p.adventure); $('#local_only').checked = !!p.localOnly; sayAdventure();
+  put('start_time', p.startTime); setDiet(p.diet || []);
   if (Array.isArray(p.interests) && p.interests.length) {
     $('#interests').value = p.interests.join(', ');
     syncChips();

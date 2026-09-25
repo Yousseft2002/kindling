@@ -129,6 +129,13 @@ const FILMS = {
 const VERIFIABLE = new Set(['food', 'drinks', 'coffee', 'music', 'show', 'activity', 'shopping']);
 const PHOTO_KINDS = new Set(['activity', 'show', 'music', 'viewpoint', 'outdoors']);
 
+/* Slots where somebody eats, so a dietary need applies. */
+const FED = new Set(['food', 'takeout']);
+
+/* How many runners-up each stop keeps for swapping. Five is enough to feel
+ * like a choice and few enough that none of them is a stretch. */
+const ALTS = 5;
+
 /* Written to sound like someone who has been there. The alternative - "a
  * specialist coffee bar in a walkable part of town" - is what this said
  * before it had any data, and it read like a form letter. */
@@ -309,17 +316,22 @@ export async function build(prefs, weather, onPhase = () => {}, locals = null) {
     // only has to be open for half an hour after the evening starts. Dinner
     // always ends the night, so it has to stay open to the end of it.
     const needUntil = slot === 'food' ? t + minutes : opening + 30;
-    let venue = null;
+    let venue = null, ranked = [];
     if (slot !== 'home') {
       const hits = await nearby(slot, prefs.lat, prefs.lon, prefs.transport, 6);
-      venue = pick(withLocals(hits, slot, locals, prefs), used,
-                   { from, needUntil, known, localOnly: prefs.localOnly });
+      ranked = rank(withLocals(hits, slot, locals, prefs), used,
+                    { from, needUntil, known, localOnly: prefs.localOnly,
+                      diet: FED.has(slot) ? (prefs.diet || []) : [] });
+      venue = ranked[0] || null;
       if (venue) from = venue;
     }
 
     const stop = slot === 'home' ? homeStop(prefs, t, minutes)
       : venue ? realStop(slot, venue, prefs, t, minutes, cost, last)
       : placeholder(slot, prefs, t, minutes, cost, last);
+    // The runners-up, kept so a stop can be swapped without planning again.
+    // Plain venue records: the plan is saved to localStorage whole.
+    stop.alts = ranked.slice(1, 1 + ALTS);
     const said = venue && known.get(venue.name.toLowerCase());
     if (said) stop.locals = { posts: said.posts, loves: said.loves, notes: said.notes.slice(0, 2) };
     // An unfillable slot produces the same sentence every time, so two of
@@ -330,6 +342,7 @@ export async function build(prefs, weather, onPhase = () => {}, locals = null) {
 
     stops.push(stop);
     used.add(stop.name.toLowerCase());
+    if (venue) onPhase('Looking for places near you', { found: stop.name, kind: stop.venueKind || stop.kind });
     if (i === 1) keep = stop.name;
     left = Math.max(0, left - cost);
     t += minutes + (last ? 0 : 12);
@@ -344,36 +357,13 @@ export async function build(prefs, weather, onPhase = () => {}, locals = null) {
   retell(stops);
 
   onPhase('Finding a photograph');
-  for (const s of stops) {
-    if (s.verified && PHOTO_KINDS.has(s.kind)) {
-      const shot = await wikiLook(s.name, s.lat, s.lon);
-      if (shot) { s.photo = shot.photo; s.blurb = shot.blurb; s.photoCredit = shot.url; }
-    }
-  }
-
-  const total = stops.reduce((a, s) => a + s.cost, 0);
-  const named = stops.filter(s => s.verified).map(s => s.name);
-  const anchorStop = stops.find(s => ['activity', 'music', 'show', 'outdoors'].includes(s.kind) && s.verified);
-  const where = (prefs.location || '').split(',')[0];
-  const home = stops.some(s => s.kind === 'home');
+  for (const s of stops) await photograph(s);
 
   const plan = {
-    title: home ? 'A night in, done properly'
-         : anchorStop ? `${anchorStop.name}, and either side of it`
-         : `An evening around ${where}`,
     adventure: ADVENTURE[Math.min(5, Math.max(1, Math.round(Number(prefs.adventure) || 2)))][0],
     timing,
-    pitch: named.length >= 2
-      ? `${named[0]}, then ${named[1]}${named[2] ? `, then ${named[2]}` : ''}`
-        + ` - about ${prefs.currency} ${Math.round(total)} for two.`
-      : `A night around ${where} for about ${prefs.currency} ${Math.round(total)}, for two.`,
     stops,
-    totalCost: Math.round(total * 100) / 100,
-    transportNote: transportNote(prefs, stops),
-    weatherCall: weatherNote(weather, stops),
     wear: wear(prefs, weather, slots),
-    backup: `${named[0] || where} is the one to check before you leave - opening hours `
-          + `move, and everything else here is close enough to swap at short notice.`,
     // Real People's Insights: the best-loved evenings locals shared near here,
     // kept on the plan so they are still there offline.
     insights: (locals?.posts || []).slice(0, 3).map(p => ({
@@ -381,10 +371,80 @@ export async function build(prefs, weather, onPhase = () => {}, locals = null) {
       loves: p.love_count || 0, city: p.city, stops: (p.stops || []).map(s => s.name),
     })),
   };
+  return finish(plan, prefs, weather);
+}
 
+/** Everything about a plan that is worked out from its stops: the title and
+ *  pitch, the totals, the notes, the links and the checks. Split out so a
+ *  swapped stop is described exactly as a planned one would have been. */
+function finish(plan, prefs, weather) {
+  const stops = plan.stops;
+  const total = stops.reduce((a, s) => a + s.cost, 0);
+  const named = stops.filter(s => s.verified).map(s => s.name);
+  const anchorStop = stops.find(s => ['activity', 'music', 'show', 'outdoors'].includes(s.kind) && s.verified);
+  const where = (prefs.location || '').split(',')[0];
+  const home = stops.some(s => s.kind === 'home');
+
+  plan.title = home ? 'A night in, done properly'
+    : anchorStop ? `${anchorStop.name}, and either side of it`
+    : `An evening around ${where}`;
+  plan.pitch = named.length >= 2
+    ? `${named[0]}, then ${named[1]}${named[2] ? `, then ${named[2]}` : ''}`
+      + ` - about ${prefs.currency} ${Math.round(total)} for two.`
+    : `A night around ${where} for about ${prefs.currency} ${Math.round(total)}, for two.`;
+  plan.totalCost = Math.round(total * 100) / 100;
+  plan.transportNote = transportNote(prefs, stops);
+  plan.weatherCall = weatherNote(weather, stops);
+  plan.backup = `${named[0] || where} is the one to check before you leave - opening hours `
+              + `move, and everything else here is close enough to swap at short notice.`;
   attachLinks(plan, prefs.location);
   plan.warnings = check(plan, prefs, weather);
   return plan;
+}
+
+/** A photograph and a line of context for a stop, where Wikipedia has one.
+ *  Only for the kinds of place that get articles - see PHOTO_KINDS. */
+export async function photograph(s) {
+  if (!s.verified || !PHOTO_KINDS.has(s.kind) || s.photo) return s;
+  const shot = await wikiLook(s.name, s.lat, s.lon);
+  if (shot) { s.photo = shot.photo; s.blurb = shot.blurb; s.photoCredit = shot.url; }
+  return s;
+}
+
+/** Put one of a stop's alternatives in its place, keeping its slot in the
+ *  evening: same start, same length, same share of the budget. The stop it
+ *  replaces becomes an alternative in turn, so a swap can be undone.
+ *
+ *  The clock does not move. Only the walks either side are re-measured, and
+ *  the checks run again - so a swap that lands on a place shut by then says
+ *  so, rather than quietly breaking the evening. Returns the plan. */
+export function swapStop(plan, index, venue, prefs, weather) {
+  const stops = plan.stops;
+  const old = stops[index];
+  if (!old || !venue || !old.slot) return plan;
+  weekday = prefs.date ? new Date(prefs.date + 'T12:00').getDay() : null;
+
+  const last = index === stops.length - 1;
+  const next = realStop(old.slot, venue, prefs, mins(old.start) ?? 0, old.minutes, old.cost, last);
+  const taken = new Set(stops.filter((_, i) => i !== index).map(s => s.name.toLowerCase()));
+  const back = old.verified ? [asVenue(old)] : [];
+  next.alts = [...back, ...(old.alts || [])]
+    .filter(v => v.name !== venue.name && !taken.has(v.name.toLowerCase()))
+    .slice(0, ALTS);
+  next.locals = null;
+  stops[index] = next;
+
+  legs(stops, prefs.transport);
+  retell(stops);
+  return finish(plan, prefs, weather);
+}
+
+/** A stop back into the venue record it was made from. */
+function asVenue(s) {
+  return { name: s.name, lat: s.lat, lon: s.lon, kind: s.venueKind, cuisine: s.cuisine || '',
+           openingHours: s.openingHours || '', website: s.website || '', address: s.address || '',
+           within: '', diet: s.diet || [], photo: s.photo || '', blurb: s.blurb || '',
+           photoCredit: s.photoCredit || '' };
 }
 
 /** The candidate to use. Never one already in the plan, and never one that
@@ -393,14 +453,24 @@ export async function build(prefs, weather, onPhase = () => {}, locals = null) {
  *  museum that closes at four and a lunch counter that closes at five. Then
  *  published hours - a decent proxy for a place someone maintains - and then
  *  the nearest to the last stop, so the evening is a route, not a scatter. */
-export function pick(candidates, used,
-                     { from = null, needUntil = null, known = null, localOnly = false } = {}) {
+export function pick(candidates, used, opts = {}) {
+  return rank(candidates, used, opts)[0] || null;
+}
+
+/** Every usable candidate, best first - pick() takes the head, and the rest
+ *  are the alternatives offered when someone swaps the stop. `diet` lists
+ *  what the kitchen has to cater for; a place tagged for all of it beats one
+ *  that is not tagged, but an untagged place is not excluded, because most
+ *  of the map carries no diet tags at all. */
+export function rank(candidates, used,
+                     { from = null, needUntil = null, known = null, localOnly = false, diet = [] } = {}) {
   const shut = c => closes(c.openingHours);
   const fresh = candidates.filter(c => !used.has(c.name.toLowerCase()))
     .filter(c => needUntil == null || shut(c) == null || shut(c) >= needUntil)
     // "Only local, independent places" means it: no chains at all.
     .filter(c => !localOnly || !isChain(c.name));
-  if (!fresh.length) return null;
+  if (!fresh.length) return [];
+  const suits = c => (!diet.length || diet.every(d => (c.diet || []).includes(d))) ? 0 : 1;
   // Even without that switch, an independent beats a chain: a date at the
   // Starbucks you pass every morning is not a plan.
   const chain = c => (isChain(c.name) ? 1 : 0);
@@ -413,9 +483,10 @@ export function pick(candidates, used,
   };
   return fresh.sort((a, b) =>
     (liked(b) - liked(a))
+    || (suits(a) - suits(b))
     || (chain(a) - chain(b))
     || ((a.openingHours ? 0 : 1) - (b.openingHours ? 0 : 1))
-    || (away(a) - away(b)))[0];
+    || (away(a) - away(b)));
 }
 
 /** The map search's candidates plus places locals shared as this kind of
@@ -458,10 +529,10 @@ function realStop(slot, v, prefs, t, minutes, cost, last) {
     tip: v.openingHours ? `Open ${v.openingHours}.` : '',
     lookedUp: true, verified: true,
     lat: v.lat, lon: v.lon, address: v.address, venueKind: v.kind,
-    cuisine: v.cuisine, openingHours: v.openingHours, website: v.website,
+    cuisine: v.cuisine, openingHours: v.openingHours, website: v.website, diet: v.diet || [],
     distanceM: (prefs.lat != null)
       ? Math.round(distanceKm(v.lat, v.lon, prefs.lat, prefs.lon) * 1000) : 0,
-    photo: '', blurb: '', photoCredit: '',
+    photo: v.photo || '', blurb: v.blurb || '', photoCredit: v.photoCredit || '',
   };
 }
 
@@ -477,7 +548,7 @@ function placeholder(slot, prefs, t, minutes, cost, last) {
   const outdoors = OUTSIDE.has(kind);
   const where = (prefs.location || '').split(',')[0];
   return {
-    name: `${what[0].toUpperCase()}${what.slice(1)} near ${where}`,
+    slot, name: `${what[0].toUpperCase()}${what.slice(1)} near ${where}`,
     kind, start: hhmm(t), minutes, cost,
     why: `Nothing matching ${what} came back on the map for this spot - worth a look `
        + `on the way, but do not build the night around it.`,
@@ -770,6 +841,19 @@ export function check(plan, prefs, weather) {
       if (start == null) continue;
       if (start > weather.sunset) {
         out.push(`'${s.name}' starts after sunset (${hhmm(weather.sunset)}). Move it earlier.`);
+      }
+    }
+  }
+
+  // A dietary need the map cannot vouch for. Most kitchens carry no diet tags
+  // at all, so this asks for a phone call rather than claiming a problem.
+  const need = (prefs.diet || []);
+  if (need.length) {
+    const said = need.map(d => d.replace(/_/g, '-')).join(' and ');
+    for (const s of stops) {
+      if (!['food'].includes(s.kind) || !s.verified) continue;
+      if (!need.every(d => (s.diet || []).includes(d))) {
+        out.push(`'${s.name}' does not list ${said} options in map data - call ahead.`);
       }
     }
   }

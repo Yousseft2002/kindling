@@ -1881,8 +1881,10 @@ def test_static_app() -> None:
           (docs / ".nojekyll").exists())
 
     # --- every module it imports is actually there ------------------------
+    ui = {p.name: p.read_text(encoding="utf-8") for p in sorted((docs / "ui").glob("*.js"))}
     sources = {docs / "app.js": app}
     sources.update({docs / "lib" / n: t for n, t in lib.items()})
+    sources.update({docs / "ui" / n: t for n, t in ui.items()})
     missing = [f"{path.name} -> {spec}"
                for path, text in sources.items()
                for spec in _re.findall(r"from\s+'(\.[^']+)'", text)
@@ -1894,7 +1896,7 @@ def test_static_app() -> None:
     #
     # The whole point of this build. One leftover /api/ call and the app
     # works only on the machine it was developed on.
-    for name, text in [("app.js", app), *lib.items()]:
+    for name, text in [("app.js", app), *lib.items(), *ui.items()]:
         check(f"{name} calls no local endpoint", "/api/" not in text)
 
     # --- the service worker, resolved relative to itself -------------------
@@ -1939,11 +1941,15 @@ def test_static_app() -> None:
     # fetched, which is a blank map rather than a slow one.
     # Only the tile <img> itself - the comment above it says the words, and
     # the Wikipedia photograph further down is lazy on purpose.
-    start = app.index("tiles +=")
-    tag = app[start:app.index(";", start)]
+    tiles = ui["tiles.js"]
+    start = tiles.index("tiles +=")
+    tag = tiles[start:tiles.index(";", start)]
     check("map tiles are not lazily loaded", "lazy" not in tag)
     check("cached tiles are revealed without waiting for a load event",
-          ".complete" in app)
+          ".complete" in tiles)
+    check("every ui module is precached for offline use",
+          all(f"at('ui/{n}')" in sw for n in ui), str([n for n in ui if f"at('ui/{n}')" not in sw]))
+    check("the springs honour reduced motion", "prefers-reduced-motion" in ui["spring.js"])
 
     # Nominatim allows one request a second. One gate, or the limit is a
     # suggestion.
