@@ -50,6 +50,7 @@ $('#install_go').addEventListener('click', async () => {
   deferredInstall = null;
 });
 window.addEventListener('appinstalled', () => $('#install').classList.remove('on'));
+$('#install_x').addEventListener('click', () => $('#install').classList.remove('on'));
 
 /* ---- the phone keyboard ---------------------------------------------
    `svh` is the viewport with the browser chrome expanded; it does not shrink

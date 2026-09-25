@@ -12,33 +12,27 @@
 <meta name="apple-mobile-web-app-title" content="Kindling">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="mobile-web-app-capable" content="yes">
-<meta name="theme-color" content="#fdf6f0" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#14100d" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#0d0a08">
+
 <meta name="description" content="Seven questions, one evening: a routed date built from real places near you.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 
 <style>
+  /* Always dark: an evening app, used in the evening, often in a dim bar.
+     Warm near-black, with the ember accent carrying all the colour. */
   :root{
-    --bg:#fdf6f0; --bg2:#f7e8dc; --card:#fffdfb; --ink:#241a14; --muted:#6f5d52;
-    --faint:#a3907f; --line:#ecdccf; --accent:#d1481f; --accent-soft:#fbdccb;
-    --glow1:#ffc79a; --glow2:#ffd9c0; --glow3:#e6cdf0;
-    --warn-bg:#fff4e6; --warn-line:#f2d9b8; --warn-ink:#8a5720;
-    --ok-ink:#4a7550;
+    color-scheme:dark;
+    --bg:#0d0a08; --bg2:#16100c; --card:#1a1310; --card2:#211813; --ink:#f6ece4;
+    --muted:#bba797; --faint:#86715f; --line:#2c211a; --accent:#ff8a4c; --accent-soft:#3a2216;
+    --glow1:#3d2112; --glow2:#2a1a10; --glow3:#231827;
+    --warn-bg:#241810; --warn-line:#43301f; --warn-ink:#e9b98a;
+    --ok-ink:#93c79c;
     --safe-t:env(safe-area-inset-top,0px); --safe-b:env(safe-area-inset-bottom,0px);
     --ease:cubic-bezier(.22,.9,.28,1);
     --serif:'Fraunces',Georgia,'Times New Roman',serif;
     --sans:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
-  }
-  @media (prefers-color-scheme:dark){
-    :root{
-      --bg:#14100d; --bg2:#1d1712; --card:#221b16; --ink:#f7ece4; --muted:#bfa896;
-      --faint:#8d7566; --line:#3a2d24; --accent:#ff9a63; --accent-soft:#40281c;
-      --glow1:#4a2f1e; --glow2:#3a2a1f; --glow3:#332536;
-      --warn-bg:#2d2015; --warn-line:#4d3520; --warn-ink:#e8b98a;
-      --ok-ink:#93c79c;
-    }
   }
 
   *{box-sizing:border-box}
@@ -56,7 +50,7 @@
   .aura{position:fixed;inset:0;z-index:0;pointer-events:none;overflow:hidden}
   .aura i{
     position:absolute;display:block;border-radius:50%;filter:blur(70px);
-    opacity:.75;will-change:transform;
+    opacity:.6;will-change:transform;
   }
   .aura i:nth-child(1){width:60vmax;height:60vmax;background:var(--glow1);
     top:-25vmax;left:-20vmax;animation:drift1 34s var(--ease) infinite alternate}
@@ -107,10 +101,23 @@
   .deck[hidden]{display:none}
 
   /* ---- chrome ---- */
-  .top{display:flex;align-items:center;gap:12px;padding:6px 0 18px;flex:none}
-  .top img{width:30px;height:30px;border-radius:8px}
-  .top b{font-family:var(--serif);font-weight:600;font-size:17px;letter-spacing:-.01em}
-  .bar{flex:1;height:4px;border-radius:99px;background:var(--line);overflow:hidden}
+  /* One row: mark, name or tabs, step count. The progress bar is a hairline
+     under it rather than a row of its own - on an iPhone SE in Safari the
+     old header, tabs and banner took half the screen before the question. */
+  .top{display:flex;align-items:center;gap:12px;padding:4px 0 16px;flex:none;position:relative}
+  .top img{width:30px;height:30px;border-radius:8px;flex:none}
+  .top .brand{font-family:var(--serif);font-weight:600;font-size:17px;letter-spacing:-.01em;flex:1}
+  .top:has(.tabs:not([hidden])) .brand{flex:none}
+  @media (max-width:430px){.top:has(.tabs:not([hidden])) .brand{display:none}}
+  .bar{position:absolute;left:0;right:0;bottom:6px;height:3px;border-radius:99px;
+       background:var(--line);overflow:hidden}
+  body.done .bar,body.tab-community .bar{visibility:hidden}
+  /* On pages that scroll - a plan, the community - the header stays put, so
+     switching tabs never means scrolling back to the top first. */
+  body.done .top,body.tab-community .top{position:sticky;top:0;z-index:25;
+       margin:0 -20px;padding:calc(8px + var(--safe-t)) 20px 10px;
+       background:rgba(13,10,8,.88);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px)}
+  body.done .wrap,body.tab-community .wrap{padding-top:0}
   .bar i{display:block;height:100%;width:0;border-radius:99px;background:var(--accent);
          transition:width .34s var(--ease)}
   .count{font-size:13px;color:var(--faint);font-variant-numeric:tabular-nums;min-width:38px;text-align:right}
@@ -119,6 +126,10 @@
           border:1px solid var(--warn-line);background:var(--warn-bg);color:var(--warn-ink);
           display:none;align-items:center;gap:12px;justify-content:space-between;line-height:1.45}
   .banner.on{display:flex}
+  /* The install prompt waits until the app has earned it - a finished plan -
+     rather than taking a sixth of the screen above every question. */
+  #install.on{display:none}
+  body.done #install.on{display:flex}
   /* This is a message for whoever is running the server, and it was taking
      13% of a phone screen above every single question. Clamp it, and let a
      tap open it. */
@@ -137,6 +148,11 @@
      clocks, and the slowest of them was the sentence you were trying to
      read. Everything now lands inside .34s. */
   .stage{position:relative;width:100%;margin:auto 0;transition:height .34s var(--ease)}
+  /* Screens that have left are invisible but still there, and a taller one -
+     the five stage cards - kept the deck scrollable under a short question,
+     with "more" pointing at nothing. Clip to the stage, with room for the
+     slide and the focus glow. */
+  .stage{overflow:hidden;overflow:clip;overflow-clip-margin:36px}
 
   .screen{position:absolute;inset:0 0 auto 0;opacity:0;pointer-events:none;
           transform:translateY(0) scale(.99);
@@ -331,9 +347,7 @@
   .map .credit{position:absolute;right:0;bottom:0;background:rgba(255,255,255,.82);
                color:#333;font-size:10.5px;padding:2px 7px;border-radius:8px 0 0 0}
   .map .credit a{color:#333}
-  @media (prefers-color-scheme:dark){
-    .map img{filter:brightness(.82) contrast(1.05)}
-  }
+  .map img{filter:brightness(.78) contrast(1.05) saturate(.9)}
 
   /* Google rating. The star and the count sit right under the venue name,
      because deciding between four suggestions is what they are for. */
@@ -383,11 +397,11 @@
   /* ---- tabs ---- */
   /* Two places to be: planning an evening, and reading what locals did with
      theirs. Hidden entirely until a community backend is configured. */
-  .tabs{flex:none;display:flex;gap:4px;padding:4px;margin:0 0 16px;border-radius:99px;
+  .tabs{flex:1;display:flex;gap:3px;padding:3px;border-radius:99px;max-width:320px;
         background:var(--card);border:1.5px solid var(--line)}
   .tabs[hidden]{display:none}
-  .tabs button{flex:1;min-height:44px;border:0;border-radius:99px;background:transparent;
-        color:var(--muted);font:inherit;font-size:15px;font-weight:600;cursor:pointer;
+  .tabs button{flex:1;min-height:40px;border:0;border-radius:99px;background:transparent;
+        color:var(--muted);font:inherit;font-size:14.5px;font-weight:600;cursor:pointer;
         transition:background .2s,color .2s}
   .tabs button[aria-selected=true]{background:var(--ink);color:var(--bg)}
   :is(.tabs button,.seg button,.love,.quiet,button.btn,.person):focus-visible{
@@ -420,7 +434,7 @@
   .badge{display:inline-block;padding:3px 9px;border-radius:99px;background:var(--accent);
          color:#fff;font-size:10.5px;font-weight:700;letter-spacing:.07em;
          text-transform:uppercase;vertical-align:1px}
-  @media (prefers-color-scheme:dark){.badge{color:#1d1712}}
+  .badge{color:#1a0f09}
   .post{margin-bottom:14px;animation:rise .36s var(--ease) backwards}
   .post .meta{font-size:12.5px;letter-spacing:.1em;text-transform:uppercase;
               color:var(--accent);font-weight:600;margin-bottom:7px}
@@ -505,6 +519,46 @@
     .field{margin-bottom:14px}
   }
 
+  /* Phones with the browser's bars showing: an iPhone SE in Safari leaves
+     about 550px, a 360px Android about 640px. The question, its answers and
+     the button all have to fit there, so everything tightens again. */
+  @media (max-height:720px){
+    .wrap{padding-top:calc(8px + var(--safe-t));padding-bottom:calc(12px + var(--safe-b))}
+    .top{padding:0 0 12px}
+    .top img{width:26px;height:26px}
+    .tabs button{min-height:36px;font-size:14px}
+    .eyebrow{font-size:10.5px;margin-bottom:6px;letter-spacing:.14em}
+    h1{font-size:clamp(22px,6.2vw,27px);line-height:1.12;margin-bottom:6px}
+    .say{font-size:14.5px;line-height:1.45;margin-bottom:12px}
+    .opts{gap:6px}
+    .opt{padding:9px 14px;border-radius:14px}
+    .opt b{font-size:16px;margin-bottom:0}
+    .opt span{font-size:12.5px;line-height:1.3}
+    .chips{gap:7px}
+    .chip{padding:8px 13px;font-size:14px}
+    input,textarea,select{padding:11px 14px;font-size:16.5px;border-radius:14px}
+    textarea{min-height:88px}
+    .pin{width:50px}
+    .money{font-size:42px;margin:0 0 2px}
+    .adv-name{font-size:30px;margin:0 0 4px}
+    .adv-say{font-size:14px;min-height:2.9em;margin-bottom:0}
+    .check{margin-top:10px;padding:10px 12px;gap:10px}
+    .check b{font-size:15px}
+    .check span{font-size:13px}
+    .field{margin-bottom:10px}
+    .field label{margin-bottom:5px}
+    .nav{padding-top:10px}
+    .go{padding:13px 22px;font-size:16.5px}
+    .back{width:46px;height:46px}
+    .hint{margin-top:6px;font-size:13px}
+  }
+  /* The smallest: the answers matter more than the sentence explaining them. */
+  @media (max-height:660px){
+    .screen:has(.opts) .say{display:none}
+    .opt{padding:7px 13px}
+    .opts{gap:5px}
+  }
+
   /* Motion is decoration here, never information: every screen is still
      reachable and readable with all of it switched off. */
   @media (prefers-reduced-motion:reduce){
@@ -526,21 +580,21 @@
 
 <div class="wrap">
 
-  <div class="top">
+  <header class="top">
     <img src="icons/icon-192.png" alt="">
-    <b>Kindling</b>
-    <span class="bar"><i id="bar"></i></span>
+    <b class="brand">Kindling</b>
+    <div class="tabs" id="tabs" role="tablist" aria-label="Kindling" hidden>
+      <button role="tab" id="tab_plan" aria-selected="true" aria-controls="f" tabindex="0" type="button">Plan</button>
+      <button role="tab" id="tab_community" aria-selected="false" aria-controls="community" tabindex="-1" type="button">Community</button>
+    </div>
     <span class="count" id="count"></span>
-  </div>
-
-  <div class="tabs" id="tabs" role="tablist" aria-label="Kindling" hidden>
-    <button role="tab" id="tab_plan" aria-selected="true" aria-controls="f" tabindex="0" type="button">Plan an evening</button>
-    <button role="tab" id="tab_community" aria-selected="false" aria-controls="community" tabindex="-1" type="button">Community</button>
-  </div>
+    <span class="bar"><i id="bar"></i></span>
+  </header>
 
   <div class="banner" id="install">
-    <span>Add this to your home screen.</span>
+    <span>Add Kindling to your home screen.</span>
     <button id="install_go" type="button">Install</button>
+    <button class="x" id="install_x" type="button" aria-label="Not now">&times;</button>
   </div>
   <div class="banner" id="stale"><span id="stale_text"></span><button class="x" id="stale_x" type="button" aria-label="Dismiss">&times;</button></div>
 
