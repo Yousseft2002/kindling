@@ -2008,6 +2008,29 @@ def test_static_app() -> None:
           "GUIDE_POSTS = 3" in comm and "GUIDE_LOVES = 10" in comm
           and "count(*) >= 3 and sum(i.love_count) >= 10" in schema)
     check("community text is escaped before it is shown", tab.count("esc(p.") >= 4)
+    # --- phones -------------------------------------------------------------
+    #
+    # iOS Safari zooms into any focused field under 16px and leaves the page
+    # zoomed. Every rule that sizes a form field has to stay at 16px or more,
+    # and the fix is never to take pinch-zoom away from people who need it.
+    small = []
+    for sel, body in _re.findall(r"([^{}]+)\{([^{}]*font-size:\s*[\d.]+px[^{}]*)\}", index):
+        if not _re.search(r"\b(input|textarea|select)\b", sel) or "range" in sel:
+            continue
+        for px in _re.findall(r"font-size:\s*([\d.]+)px", body):
+            if float(px) < 16:
+                small.append(f"{sel.strip()[-60:]} -> {px}px")
+    check("no form field is under 16px, so iOS never zooms into it", not small, str(small))
+    viewport = _re.search(r'name="viewport" content="([^"]+)"', index).group(1)
+    check("the viewport fits the screen and the notch",
+          "width=device-width" in viewport and "viewport-fit=cover" in viewport)
+    check("pinch-zoom is never disabled",
+          "maximum-scale" not in viewport and "user-scalable" not in viewport)
+    check("full-height screens use dynamic viewport units", "100dvh" in index)
+    check("the notch is respected on every side",
+          all(f"safe-area-inset-{s}" in index for s in ("top", "bottom", "left", "right")))
+    check("the keyboard-aware height allows for zoom", "vv.height * (vv.scale || 1)" in app)
+
     # --- adventure, local-only, and hours by day ------------------------------
     plan_js = lib["plan.js"]
     check("five adventure levels, from a night in to wild",

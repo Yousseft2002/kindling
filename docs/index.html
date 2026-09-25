@@ -70,11 +70,17 @@
      that the long option lists push the button off the bottom instead of
      scrolling inside the deck. The results page is arbitrarily long, so
      `body.done` relaxes it again. */
+  /* Height: `dvh` follows the browser's toolbar as it collapses, and --vh -
+     set from the visual viewport in app.js - also shrinks for the keyboard,
+     so the button sits above it rather than behind it. Sides: the notch is on
+     the left or right in landscape, so those insets count too. */
   .wrap{position:relative;z-index:1;max-width:680px;margin:0 auto;
-        padding:calc(16px + var(--safe-t)) 20px calc(24px + var(--safe-b));
-        height:100vh;height:100svh;height:var(--vh,100svh);
+        --pad-l:max(20px, env(safe-area-inset-left, 0px));
+        --pad-r:max(20px, env(safe-area-inset-right, 0px));
+        padding:calc(16px + var(--safe-t)) var(--pad-r) calc(24px + var(--safe-b)) var(--pad-l);
+        height:100vh;height:100dvh;height:var(--vh,100dvh);
         display:flex;flex-direction:column}
-  body.done .wrap{height:auto;min-height:100vh;min-height:100svh}
+  body.done .wrap{height:auto;min-height:100vh;min-height:100dvh}
   /* The form wraps the deck, so it has to carry the growth itself - otherwise
      flex:1 on .deck has nothing to grow inside and the button floats
      mid-page instead of sitting at the bottom. */
@@ -115,7 +121,8 @@
   /* On pages that scroll - a plan, the community - the header stays put, so
      switching tabs never means scrolling back to the top first. */
   body.done .top,body.tab-community .top{position:sticky;top:0;z-index:25;
-       margin:0 -20px;padding:calc(8px + var(--safe-t)) 20px 10px;
+       margin:0 calc(-1 * var(--pad-r)) 0 calc(-1 * var(--pad-l));
+       padding:calc(8px + var(--safe-t)) var(--pad-r) 10px var(--pad-l);
        background:rgba(13,10,8,.88);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px)}
   body.done .wrap,body.tab-community .wrap{padding-top:0}
   .bar i{display:block;height:100%;width:0;border-radius:99px;background:var(--accent);
@@ -379,6 +386,12 @@
   .sources a:hover{color:var(--accent);border-color:var(--accent)}
   .foot{margin:22px 0 0;font-size:13.5px;color:var(--faint);line-height:1.6}
   .foot a{color:inherit}
+  /* Text people type, and names from map data, can be one long unbroken word
+     - a web address, a German compound - and one of those widens the page. */
+  .why,.detail,.blurb,.stop h3,.hero h2,.pitch,.arc,.post,.route,.tips,.person,.insight,
+  .local,.ac div,.banner span,.toast{overflow-wrap:anywhere}
+  img,video{max-width:100%}
+  .map img{max-width:none}
   .err{border-color:var(--warn-line);background:var(--warn-bg);color:var(--warn-ink);font-size:17px}
 
   /* ---- adventure ---- */
@@ -407,7 +420,7 @@
   :is(.tabs button,.seg button,.love,.quiet,button.btn,.person):focus-visible{
         outline:3px solid var(--accent);outline-offset:2px}
   body.tab-community #f,body.tab-community #nav,body.tab-community #out{display:none!important}
-  body.tab-community .wrap{height:auto;min-height:100vh;min-height:100svh}
+  body.tab-community .wrap{height:auto;min-height:100vh;min-height:100dvh}
   body.tab-community .bar,body.tab-community .count{visibility:hidden}
 
   /* ---- community ---- */
@@ -475,9 +488,9 @@
   .insight .detail{margin-top:5px;font-size:14.5px}
 
   /* ---- sheets ---- */
-  dialog.sheet{width:min(560px,100%);max-width:100%;max-height:92vh;max-height:92svh;
+  dialog.sheet{width:min(560px,100%);max-width:100%;max-height:92vh;max-height:92dvh;
        margin:auto auto 0;border:0;border-radius:24px 24px 0 0;
-       padding:26px 20px calc(22px + var(--safe-b));background:var(--bg);color:var(--ink);
+       padding:26px max(20px, env(safe-area-inset-right, 0px)) calc(22px + var(--safe-b)) max(20px, env(safe-area-inset-left, 0px));background:var(--bg);color:var(--ink);
        overflow-y:auto;overscroll-behavior:contain}
   dialog.sheet[open]{animation:arrive .3s var(--ease) both}
   dialog.sheet::backdrop{background:rgba(20,12,8,.52)}

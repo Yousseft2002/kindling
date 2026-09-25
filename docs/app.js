@@ -59,7 +59,11 @@ $('#install_x').addEventListener('click', () => $('#install').classList.remove('
    viewport does shrink, so drive the height from that. */
 if (window.visualViewport) {
   const vv = window.visualViewport;
-  const fit = () => document.documentElement.style.setProperty('--vh', vv.height + 'px');
+  // Times the zoom scale: pinch-zoomed (or auto-zoomed into a field), the
+  // visual viewport is the zoomed-in window, and using its raw height shrank
+  // the whole layout to that - which then stayed shrunk and looked like the
+  // page was stuck zoomed in.
+  const fit = () => document.documentElement.style.setProperty('--vh', (vv.height * (vv.scale || 1)) + 'px');
   vv.addEventListener('resize', fit);
   fit();
   document.addEventListener('focusin', e => {
