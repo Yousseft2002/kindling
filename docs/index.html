@@ -532,6 +532,32 @@
     .field{margin-bottom:14px}
   }
 
+  /* ---- the questions are pinned to what is visible ----
+     On the questions the page never scrolls; the app is fixed to the visual
+     viewport, which app.js follows as the keyboard opens and Safari pans.
+     Plans and the community are ordinary scrolling pages. */
+  body:not(.done):not(.tab-community){position:fixed;inset:0;overflow:hidden}
+  body:not(.done):not(.tab-community) .wrap{position:fixed;left:0;right:0;top:0;
+       height:var(--vvh,100dvh);transform:translateY(var(--vvt,0px))}
+
+  /* Typing on a phone: only the question, the field and the button. */
+  body.kb .top,body.kb .screen .eyebrow,body.kb .screen .say,body.kb .more-hint,
+  body.kb #stale,body.kb #chips{display:none}
+  body.kb .wrap{padding-top:12px;padding-bottom:8px}
+  body.kb h1{font-size:clamp(20px,5.6vw,24px);line-height:1.15;margin-bottom:12px}
+  body.kb .nav{padding-top:8px}
+  body.kb .go{padding:12px 22px;font-size:16.5px}
+  body.kb .back{width:44px;height:44px}
+  body.kb input,body.kb select{min-height:50px}
+  /* Sized to fit what the keyboard leaves. */
+  body.kb textarea{min-height:0;height:clamp(84px, calc(var(--vvh,400px) * .34), 180px)}
+  body.kb .ac{max-height:calc(var(--vvh,400px) * .4);overflow-y:auto;overscroll-behavior:contain}
+  /* A sheet being typed in fills exactly the visible part of the screen. */
+  body.kb dialog.sheet{top:var(--vvt,0px);bottom:auto;left:0;right:0;margin:0 auto;
+       height:var(--vvh,100dvh);max-height:var(--vvh,100dvh);border-radius:0;
+       padding-top:16px;padding-bottom:16px}
+  body.kb dialog.sheet .say,body.kb dialog.sheet .eyebrow,body.kb dialog.sheet .hint{display:none}
+
   /* Phones with the browser's bars showing: an iPhone SE in Safari leaves
      about 550px, a 360px Android about 640px. The question, its answers and
      the button all have to fit there, so everything tightens again. */

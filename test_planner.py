@@ -2029,7 +2029,9 @@ def test_static_app() -> None:
     check("full-height screens use dynamic viewport units", "100dvh" in index)
     check("the notch is respected on every side",
           all(f"safe-area-inset-{s}" in index for s in ("top", "bottom", "left", "right")))
-    check("the keyboard-aware height allows for zoom", "vv.height * (vv.scale || 1)" in app)
+    check("the questions are pinned to the visible part of the screen",
+          "--vvt" in app and "translateY(var(--vvt" in index)
+    check("following the keyboard never fights pinch-zoom", "(vv.scale || 1) > 1.01" in app)
 
     # --- adventure, local-only, and hours by day ------------------------------
     plan_js = lib["plan.js"]

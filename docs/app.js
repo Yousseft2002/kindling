@@ -53,65 +53,89 @@ window.addEventListener('appinstalled', () => $('#install').classList.remove('on
 $('#install_x').addEventListener('click', () => $('#install').classList.remove('on'));
 
 /* ---- the phone keyboard ---------------------------------------------
-   `svh` is the viewport with the browser chrome expanded; it does not shrink
-   when the software keyboard opens, so the layout stayed full height while
-   only half was visible and the button sat behind the keyboard. The visual
-   viewport does shrink, so drive the height from that. */
-if (window.visualViewport) {
-  const vv = window.visualViewport;
-  // Times the zoom scale: pinch-zoomed (or auto-zoomed into a field), the
-  // visual viewport is the zoomed-in window, and using its raw height shrank
-  // the whole layout to that - which then stayed shrunk and looked like the
-  // page was stuck zoomed in.
-  const fit = () => document.documentElement.style.setProperty('--vh', (vv.height * (vv.scale || 1)) + 'px');
+   On an iPhone the keyboard does not resize the page: it covers the bottom
+   of it, and Safari then scrolls or pans the page to show the field being
+   typed in - usually by putting it at the very top of the screen. Every
+   attempt to scroll things back afterwards raced Safari and lost.
 
-  /* Keep the field being typed in centred in what is actually visible.
-     scrollIntoView used to do this, and it scrolled the page as well as the
-     question: iOS had already scrolled the page to reveal the field, the
-     layout then shrank to fit above the keyboard, and between them the field
-     ended up pinned to the top of the screen. Now:
-       - on the questions, the page never scrolls - it is already sized to
-         the space above the keyboard - and only the question area moves;
-       - in a sheet, the sheet scrolls, measured against the part of it the
-         keyboard is not covering;
-       - on pages that scroll (a plan, the community), the page scrolls. */
-  const questions = () => !document.body.classList.contains('done')
+   So on the questions the page does not scroll at all. The app is pinned to
+   the visual viewport - the part of the screen above the keyboard - with its
+   height and position set from it (--vvh, --vvt in index.html), so wherever
+   Safari pans, the app is exactly what is visible. While a field is being
+   typed in, body.kb folds away everything but the question, the field and
+   the button, and the field is centred in what is left.
+
+   Pinch-zoom is left alone: while zoomed, the viewport is not followed, so
+   the layout keeps its normal size and zooming back out restores it. */
+const vv = window.visualViewport;
+const COARSE = matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;
+const onQuestions = () => !document.body.classList.contains('done')
                        && !document.body.classList.contains('tab-community');
-  const typing = () => {
-    const el = document.activeElement;
-    return el && el.matches('input:not([type=range]):not([type=checkbox]),textarea,select') ? el : null;
-  };
-  function centre(el) {
-    if (!el?.isConnected) return;
-    const top = vv.offsetTop, bottom = vv.offsetTop + vv.height;
-    const box = el.closest('dialog') || (questions() && el.closest('.deck'));
-    if (box) {
-      const b = box.getBoundingClientRect();
-      const lo = Math.max(b.top, top), hi = Math.min(b.bottom, bottom);
-      const r = el.getBoundingClientRect();
-      box.scrollTop += (r.top + r.height / 2) - (lo + hi) / 2;
-      return;
-    }
-    const r = el.getBoundingClientRect();
-    window.scrollBy(0, (r.top + r.height / 2) - (top + bottom) / 2);
-  }
-  const settle = () => {
-    // On the questions the page itself stays at the top; iOS scrolls it to
-    // reveal the field, and that is what pushed the field to the top.
-    if (questions() && (window.scrollY || vv.offsetTop)) window.scrollTo(0, 0);
-    centre(typing());
-  };
-
-  vv.addEventListener('resize', () => { fit(); if (typing()) settle(); });
-  vv.addEventListener('scroll', () => { if (typing() && questions()) settle(); });
-  fit();
-  document.addEventListener('focusin', e => {
-    if (!typing()) return;
-    // Once straight away, and again when the keyboard has finished opening.
-    requestAnimationFrame(settle);
-    setTimeout(settle, 350);
-  });
+function typingIn() {
+  const el = document.activeElement;
+  return el && el.matches('input:not([type=range]):not([type=checkbox]):not([type=hidden]),textarea,select')
+    ? el : null;
 }
+
+function followViewport() {
+  if (!vv || (vv.scale || 1) > 1.01) return;
+  const s = document.documentElement.style;
+  s.setProperty('--vvh', vv.height + 'px');
+  s.setProperty('--vvt', vv.offsetTop + 'px');
+  s.setProperty('--vh', vv.height + 'px');
+}
+
+function keyboardMode() {
+  const on = COARSE && !!typingIn();
+  if (document.body.classList.contains('kb') === on) return;
+  document.body.classList.toggle('kb', on);
+  measure();                       // the question lost its eyebrow and sentence
+}
+
+/** Put the field in the middle of what can be seen: the question area on
+ *  the questions, the sheet in a sheet, the page on pages that scroll. */
+function centre(el) {
+  if (!el?.isConnected) return;
+  const top = vv ? vv.offsetTop : 0;
+  const bottom = top + (vv ? vv.height : innerHeight);
+  const r = el.getBoundingClientRect();
+  const box = el.closest('dialog') || (onQuestions() && el.closest('.deck'));
+  if (box) {
+    const b = box.getBoundingClientRect();
+    const lo = Math.max(b.top, top), hi = Math.min(b.bottom, bottom);
+    const off = (r.top + r.height / 2) - (lo + hi) / 2;
+    if (Math.abs(off) > 4) box.scrollTop += off;
+    return;
+  }
+  const off = (r.top + r.height / 2) - (top + bottom) / 2;
+  if (Math.abs(off) > 8) window.scrollBy(0, off);
+}
+
+function settle() {
+  followViewport();
+  keyboardMode();
+  // The stage animates to its new height over .34s; centre once it is there.
+  centre(typingIn());
+  setTimeout(() => centre(typingIn()), 380);
+}
+
+if (vv) {
+  vv.addEventListener('resize', settle);
+  vv.addEventListener('scroll', () => { followViewport(); });
+}
+followViewport();
+document.addEventListener('focusin', () => {
+  if (!typingIn()) return;
+  // Now, and again as the keyboard finishes sliding up.
+  requestAnimationFrame(settle);
+  setTimeout(settle, 300);
+  setTimeout(settle, 650);
+});
+document.addEventListener('focusout', () => {
+  // Moving from one field to the next blurs then focuses; only leave typing
+  // mode if nothing took the focus.
+  setTimeout(() => { if (!typingIn()) { keyboardMode(); followViewport(); } }, 60);
+});
 
 /* ====================================================================
    The deck: one question per screen.
