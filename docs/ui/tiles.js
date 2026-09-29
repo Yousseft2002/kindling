@@ -7,7 +7,8 @@
  * night-toned map of the street it is on beats a grey box.
  */
 
-const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+import { esc } from '../lib/fmt.js';
+
 const TILE = 256;
 const projX = (lon, z) => (lon + 180) / 360 * 2 ** z * TILE;
 const projY = (lat, z) => {

@@ -160,6 +160,22 @@ forever. Static assets are now stale-while-revalidate - instant from cache,
 replaced in the background - and the page itself is network-first. Bumping a
 version constant by hand is not a mechanism.
 
+**The plan has to survive leaving the app.** The whole idea is that you
+settle the evening beforehand and then put the phone away, which only works
+if the evening is somewhere you will actually see it. So `lib/outing.js`
+turns a plan into three things that outlive the tab: an `.ics` the calendar
+will nag you about, a plain-text itinerary to paste into a message, and one
+Google Maps link that routes the whole night in order. All pure functions of
+the plan, so they work offline and on a plan restored from storage.
+
+Two details that are not arbitrary. Calendar times are **floating local**
+- no `Z`, no `TZID` - because the evening happens at 19:00 where the couple
+is standing, and shipping a timezone database to say so would be absurd;
+`DTSTAMP` is UTC, because that one the spec does pin. And the route leaves
+out any stop without coordinates rather than guessing: routing through
+"somewhere with live music near Boston" sends you wherever the geocoder
+feels like.
+
 **A hidden page freezes every animation, so nothing may wait on one.**
 Background the tab and `document.timeline.currentTime` stays at 0,
 `requestAnimationFrame` never fires, and `anim.finished` neither resolves nor
@@ -305,6 +321,8 @@ docs/                 the app — this is what GitHub Pages serves
   ui/hero.js          a stop opened into a full-screen detail view
   ui/swap.js          the 3D alternatives deck
   ui/envelope.js      the sealed envelope: sealing one, breaking one open
+  lib/fmt.js          the one esc(), imported everywhere
+  lib/outing.js       the evening as a calendar file, a message, a route
   lib/net.js          fetch, session cache, the Nominatim rate gate
   lib/places.js       geocoding, category search, venue lookup, noise filter
   lib/weather.js      forecast, golden hour, typed overrides

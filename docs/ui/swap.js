@@ -14,8 +14,8 @@
 import { springTo, riseIn, REDUCED } from './spring.js';
 import { visual, revealTiles } from './tiles.js';
 import { DIET_LABEL } from './hero.js';
+import { esc } from '../lib/fmt.js';
 
-const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 
 /** { stop, index, alts, onPick(venue) } - onPick is not called for "keep". */
 export function openSwap({ stop, index, alts, onPick }) {

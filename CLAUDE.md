@@ -54,6 +54,8 @@ docs/                 THE PRODUCT: a static app served by GitHub Pages
   lib/plan.js         slots, rank/pick, build, swapStop, the checks
   lib/places.js       Nominatim/Open-Meteo lookups, chain and noise filters, diet tags
   lib/net.js          fetch, memo cache, the ONE Nominatim rate gate
+  lib/fmt.js          the ONE esc(); every module imports it, none redefines it
+  lib/outing.js       plan -> .ics / plain text / a maps route (pure, offline)
   lib/weather.js      lib/wiki.js  lib/links.js  lib/community.js
   community-tab.js    config.js (public Supabase anon key)  sw.js  privacy.html
 dateplanner/ run.py   the Python build: same rules plus the AI planning path (needs a server)
@@ -104,7 +106,8 @@ every JS file you touched.
    - The CSS override block must name every `.screen.enter-*` and
      `.screen.exit-*` class.
 8. **Escape everything that reaches `innerHTML`** with `esc()`: venue names,
-   community text, anything a user typed.
+   community text, anything a user typed. Import it from `lib/fmt.js` -
+   never redeclare it locally, or the rule has one more place to be wrong.
 9. **Never transform a scroll-snap target.** Chrome snaps to the transformed
    box. Transform an inner element instead, as `.sc-in` does in `swap.js`.
 10. **Saved plans are stored in `localStorage` whole.** A stop must stay plain,

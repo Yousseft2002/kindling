@@ -357,7 +357,11 @@ export async function build(prefs, weather, onPhase = () => {}, locals = null) {
   retell(stops);
 
   onPhase('Finding a photograph');
-  for (const s of stops) await photograph(s);
+  // All at once. Wikipedia is not the rate-gated source - Nominatim is - and
+  // these were queued one behind another purely because a for-await reads
+  // nicely, which cost the plan the better part of a second for nothing.
+  // Each call swallows its own failures, so Promise.all cannot reject here.
+  await Promise.all(stops.map(photograph));
 
   const plan = {
     adventure: ADVENTURE[Math.min(5, Math.max(1, Math.round(Number(prefs.adventure) || 2)))][0],

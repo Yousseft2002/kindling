@@ -10,9 +10,9 @@
 
 import * as C from './lib/community.js';
 import * as places from './lib/places.js';
+import { esc } from './lib/fmt.js';
 
 const $ = s => document.querySelector(s);
-const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 
 const CITY = 'kindling.community.city';
 const DRAFT = 'kindling.community.draft';

@@ -10,8 +10,9 @@ import { endOf } from '../lib/plan.js';
 import * as wx from '../lib/weather.js';
 import { routeMap, visual } from './tiles.js';
 import { DIET_LABEL } from './hero.js';
+import { routeUrl } from '../lib/outing.js';
+import { esc } from '../lib/fmt.js';
 
-const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const mins = t => { const m = /^(\d{1,2}):(\d{2})$/.exec(t || ''); return m ? +m[1] * 60 + +m[2] : null; };
 const hhmm = m => `${String(Math.floor(((m % 1440) + 1440) % 1440 / 60)).padStart(2, '0')}:${String(((m % 60) + 60) % 60).padStart(2, '0')}`;
 
@@ -89,6 +90,7 @@ export function planHtml(d, { community = false } = {}) {
     <h4 class="sec">The evening <small>Tap a stop to open it</small></h4>
     <ol class="timeline">${rows}</ol>
 
+    ${takeHtml(p, prefs)}
     ${shared ? '' : sendHtml()}
     ${shared ? '' : tuneHtml(prefs)}
     ${warn}
@@ -99,6 +101,27 @@ export function planHtml(d, { community = false } = {}) {
       Booking links may earn a commission. Everything here is an
       estimate &mdash; check before you go.${community ? ' <a href="privacy.html">Privacy</a>' : ''}</p>
     <button class="go" type="button" id="again" style="margin-top:20px">${shared ? 'Plan one back' : 'Plan another'}</button>`;
+}
+
+/* ---- take it with you ------------------------------------------------ */
+
+/* The plan has to survive leaving the app, or the whole "settle it
+ * beforehand and put the phone away" idea collapses into another tab you
+ * forget to reopen. Three ways out: the calendar that already nags you, a
+ * message to the person you are going with, and a route the maps app can
+ * follow. A shared evening gets these too - it is their night as well. */
+function takeHtml(p, prefs) {
+  const route = routeUrl(p.stops, prefs.transport);
+  return `
+    <section class="take card" aria-labelledby="take_t">
+      <h4 id="take_t" class="gold-h">Take it with you</h4>
+      <p class="detail">Out of the app, so the phone can stay in a pocket.</p>
+      <div class="take-row">
+        <button class="btn ghost" type="button" id="to_cal">Add to calendar</button>
+        <button class="btn ghost" type="button" id="to_txt">Copy as text</button>
+        ${route ? `<a class="btn ghost" id="to_map" href="${esc(route)}" target="_blank" rel="noopener">Open the route</a>` : ''}
+      </div>
+    </section>`;
 }
 
 /* ---- send it, sealed ------------------------------------------------- */
