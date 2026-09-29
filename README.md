@@ -160,6 +160,20 @@ forever. Static assets are now stale-while-revalidate - instant from cache,
 replaced in the background - and the page itself is network-first. Bumping a
 version constant by hand is not a mechanism.
 
+**A hidden page freezes every animation, so nothing may wait on one.**
+Background the tab and `document.timeline.currentTime` stays at 0,
+`requestAnimationFrame` never fires, and `anim.finished` neither resolves nor
+rejects - measured in a hidden tab, 57 animations all sitting at t=0. Every
+`await` on an animation is therefore a place the app can stop for good, and
+the invitation loader did: switch apps during the ten seconds a plan takes,
+which is exactly when someone checks a message, and you came back to the
+loader still on screen with the finished plan stuck behind it. `settled()` in
+`ui/spring.js` ends the wait on whichever comes first - the animation
+finishing, the page going away, or the clock running out - so motion is
+decoration with a deadline. Timers keep firing while hidden; the timeline does
+not. A class flip queued in `requestAnimationFrame` has the same problem, so
+the loader flushes its start state with `void root.offsetWidth` instead.
+
 **Every path is relative.** A GitHub Pages project site lives at
 `you.github.io/kindling/`, so an absolute `/icons/…`, or a service worker
 caching `'/'`, points at the domain root and breaks. `sw.js` resolves
@@ -262,7 +276,7 @@ without signal, and says so. The icons are generated, not hand-drawn:
 docs/                 the app — this is what GitHub Pages serves
   index.html          shell, styles, the deck
   app.js              screens, transitions, planning, wiring the results
-  ui/spring.js        spring physics baked into Web Animations keyframes
+  ui/spring.js        spring physics in Web Animations keyframes, plus settled()
   ui/tiles.js         route map, single-place map visuals, tile reveal
   ui/invitation.js    the loading sequence
   ui/results.js       the plan page and the tune panel

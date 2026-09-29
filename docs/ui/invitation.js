@@ -71,8 +71,12 @@ export function openInvitation(where = '') {
   const card = k => root.querySelector(`.inv-card[data-k="${k}"]`);
   let current = null;
 
-  // The outline draws itself, then the head rises.
-  requestAnimationFrame(() => root.classList.add('on'));
+  // The outline draws itself, then the head rises. The start state is
+  // flushed synchronously rather than in requestAnimationFrame, which never
+  // runs on a page that is not being painted - the loader would then open
+  // with its outline undrawn and stay that way.
+  void root.offsetWidth;
+  root.classList.add('on');
   riseIn(root.querySelectorAll('.inv-head > *'), { gap: 80, distance: 18 });
 
   function light(k) {
