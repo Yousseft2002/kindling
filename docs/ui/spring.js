@@ -71,11 +71,48 @@ export function springTo(el, from, to, opts = {}) {
   const anim = el.animate(frames, {
     duration, delay: opts.delay || 0, easing: 'linear', fill: 'both',
   });
-  return anim.finished.then(() => {
+  return settled(anim, duration + (opts.delay || 0)).then(() => {
     // Commit the end state so a later style change starts from it.
     Object.assign(el.style, frame(to));
-    anim.cancel();
-  }).catch(() => {});
+    try { anim.cancel(); } catch { /* already gone */ }
+  });
+}
+
+/** Wait for an animation, but never longer than the animation is worth.
+ *
+ *  A hidden document freezes the animation timeline - `document.timeline
+ *  .currentTime` stays at 0, requestAnimationFrame never ticks, and
+ *  `anim.finished` neither resolves nor rejects. Measured, not assumed: 57
+ *  animations sat at t=0 while the tab was in the background.
+ *
+ *  Every await in the UI is therefore a place the app can stop forever.
+ *  The invitation loader did exactly that - switch apps during the ten
+ *  seconds a plan takes, which is precisely when someone checks a message,
+ *  and you came back to the loader still on screen with the finished plan
+ *  stuck behind it.
+ *
+ *  So motion is decoration with a deadline. Whichever happens first - the
+ *  animation finishing, the page going away, or the clock running out - the
+ *  caller carries on. Timers keep firing while hidden; the timeline does
+ *  not.
+ */
+export function settled(anim, expectedMs = 0) {
+  return new Promise(resolve => {
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      document.removeEventListener('visibilitychange', onHide);
+      resolve();
+    };
+    const onHide = () => { if (document.hidden) finish(); };
+    const timer = setTimeout(finish, expectedMs + 250);
+    document.addEventListener('visibilitychange', onHide);
+    anim.finished.then(finish, finish);
+    // Backgrounded before it ever started: there is nothing to watch.
+    if (document.hidden) finish();
+  });
 }
 
 /** Stagger a list of elements up from below, one after another. */

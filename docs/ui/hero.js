@@ -10,7 +10,7 @@
  * the bottom 40% the things you can do about it.
  */
 
-import { springTo, riseIn, REDUCED } from './spring.js';
+import { springTo, riseIn, settled, REDUCED } from './spring.js';
 import { visual, revealTiles } from './tiles.js';
 import { endOf, walkTime } from '../lib/plan.js';
 
@@ -116,8 +116,12 @@ export async function close(fromPop = false) {
                 { duration: 200, easing: 'ease-in', fill: 'forwards' }));
     hv.animate([{ backgroundColor: 'rgba(13,12,16,1)' }, { backgroundColor: 'rgba(13,12,16,0)' }],
                { duration: MORPH_MS * 0.8, easing: 'ease-in', fill: 'forwards' });
-    await media.animate([{ transform: 'none', clipPath: 'inset(0px round 0px)' }, to],
-                        { duration: MORPH_MS * 0.85, easing: EASE, fill: 'forwards' }).finished.catch(() => {});
+    // Through settled(), because a backgrounded page freezes the timeline and
+    // this await is what removes the overlay: hanging here leaves the hero
+    // view covering the itinerary for good.
+    await settled(media.animate([{ transform: 'none', clipPath: 'inset(0px round 0px)' }, to],
+                                { duration: MORPH_MS * 0.85, easing: EASE, fill: 'forwards' }),
+                  MORPH_MS);
   }
   hv.remove();
   document.documentElement.classList.remove('locked');

@@ -1951,6 +1951,34 @@ def test_static_app() -> None:
           all(f"at('ui/{n}')" in sw for n in ui), str([n for n in ui if f"at('ui/{n}')" not in sw]))
     check("the springs honour reduced motion", "prefers-reduced-motion" in ui["spring.js"])
 
+    # Nothing in the UI may wait on an animation that a hidden page will
+    # never finish.
+    #
+    # A backgrounded document freezes the animation timeline: currentTime
+    # stays at 0, requestAnimationFrame never fires, and `anim.finished`
+    # neither resolves nor rejects. Every await on it is a place the app can
+    # stop for good - and the invitation loader did, so switching apps during
+    # the ten seconds a plan takes left the loader up and the finished plan
+    # behind it. Measured in a hidden tab: 57 animations, all at t=0.
+    spring = ui["spring.js"]
+    check("spring.js gives every animation a deadline",
+          "export function settled" in spring)
+    check("the deadline includes the page going away",
+          "visibilitychange" in spring and "document.hidden" in spring)
+    check("springTo waits through it, so every caller inherits the escape",
+          "settled(anim" in spring)
+    naked = [n for n, t in ui.items() if ".finished" in t and n != "spring.js"]
+    check("no ui module awaits anim.finished directly", not naked, str(naked))
+
+    # Same trap, without an animation: a class flip queued in rAF never
+    # happens on a page that is not being painted, so the loader would open
+    # with its outline undrawn.
+    inv = ui["invitation.js"]
+    inv_code = "\n".join(l for l in inv.splitlines()
+                          if not l.lstrip().startswith(("//", "*", "/*")))
+    check("the loader flushes its start state synchronously",
+          "void root.offsetWidth" in inv_code and "requestAnimationFrame(" not in inv_code)
+
     # Nominatim allows one request a second. One gate, or the limit is a
     # suggestion.
     net = lib["net.js"]
