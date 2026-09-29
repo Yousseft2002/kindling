@@ -23,7 +23,7 @@ const MORPH_MS = 520;
 
 let open = null;       // the one detail view that can exist
 
-/** ctx: { index, stop, money(n), canSwap, onSwap(index), rowFor(index) } */
+/** ctx: { index, stop, money(n) or null to leave prices out, canSwap, onSwap(index), rowFor(index) } */
 export function openStop(ctx) {
   if (open) return;
   const row = ctx.rowFor(ctx.index);
@@ -181,7 +181,7 @@ function markup({ stop: s, index, money, canSwap }) {
       <div class="hv-stats">
         <div><small>Arrive</small><b>${esc(s.start)}</b></div>
         <div><small>Stay</small><b>${Math.round(s.minutes)} min</b></div>
-        <div><small>Budget</small><b>${money(s.cost)}</b></div>
+        ${money ? `<div><small>Budget</small><b>${money(s.cost)}</b></div>` : ''}
       </div>
       <p class="insight-line"><span aria-hidden="true">✦</span> ${esc(s.why)}</p>
       ${s.tip ? `<p class="insight-line soft">${esc(s.tip)}</p>` : ''}

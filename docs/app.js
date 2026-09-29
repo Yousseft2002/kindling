@@ -9,6 +9,8 @@ import { openSwap } from './ui/swap.js';
 import { planHtml, wireTune } from './ui/results.js';
 import { revealTiles } from './ui/tiles.js';
 import { springTo } from './ui/spring.js';
+import { openSeal, openReceived } from './ui/envelope.js';
+import { tokenFrom, unseal } from './lib/envelope.js';
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -442,6 +444,8 @@ function submit() { return run(readForm()); }
 
 /** Build an evening from a set of answers, behind the invitation. */
 async function run(prefs) {
+  // Their own evening now: the envelope link is no longer what this page is about.
+  if (tokenFrom(location.hash)) history.replaceState(null, '', location.pathname + location.search);
   const btn = $('#go');
   btn.disabled = true;
   $('#stale').classList.remove('on');
@@ -520,6 +524,7 @@ function show(d, { quiet = false } = {}) {
     : null;
   $('#locals_more')?.addEventListener('click', () => openCommunity(here));
   $('#locals_share')?.addEventListener('click', () => openCommunity(here, 'share'));
+  $('#seal')?.addEventListener('click', () => openSeal({ data: current }));
 
   out.querySelectorAll('.row').forEach(r => r.addEventListener('click', () => openRow(+r.dataset.i)));
   wireTune(out, prefs, changes => {
@@ -559,7 +564,7 @@ function stopCtx(i) {
   const s = current.plan.stops[i], cur = current.prefs.currency;
   return {
     index: i, stop: s, rowFor,
-    money: n => n > 0 ? `${cur} ${Math.round(n)}` : 'Free',
+    money: current.shared ? null : n => n > 0 ? `${cur} ${Math.round(n)}` : 'Free',
     canSwap: !!(s.slot && s.alts?.length),
     onSwap: swapAt,
   };
@@ -626,6 +631,24 @@ function swapAt(i) {
 })();
 
 addEventListener('online', () => $('#stale').classList.remove('on'));
+
+/* ---- a sealed envelope arrives ---------------------------------------
+   The plan is in the link's fragment, so this needs no network at all. It is
+   shown over whatever the page opened to; the saved plan is left alone. */
+(async function receive() {
+  const token = tokenFrom(location.hash);
+  if (!token) return;
+  try {
+    const { note, surprise, data } = await unseal(token);
+    openReceived({ note, surprise, data, onOpen() {
+      data.note = note;
+      $('#stale').classList.remove('on');
+      show(data);
+    } });
+  } catch {
+    setStale('That envelope could not be opened. Ask them to send it again.');
+  }
+})();
 
 /* ---- budget slider, hours, currency ---------------------------------- */
 const bRange = $('#budget_range'), bNum = $('#budget');

@@ -12,7 +12,7 @@
  * and would cache the wrong thing, or nothing at all.
  */
 
-const VERSION = 'kindling-v6';
+const VERSION = 'kindling-v7';
 const ROOT = new URL('./', self.location);           // .../kindling/
 const at = path => new URL(path, ROOT).toString();
 
@@ -30,12 +30,14 @@ const SHELL = [
   at('lib/plan.js'),
   at('lib/links.js'),
   at('lib/community.js'),
+  at('lib/envelope.js'),
   at('ui/spring.js'),
   at('ui/tiles.js'),
   at('ui/invitation.js'),
   at('ui/hero.js'),
   at('ui/swap.js'),
   at('ui/results.js'),
+  at('ui/envelope.js'),
   at('privacy.html'),
   at('manifest.webmanifest'),
   at('icons/icon-192.png'),

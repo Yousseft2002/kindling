@@ -258,6 +258,28 @@ Three pieces of motion, all in `docs/ui/`, none from a library:
 run on the compositor while the main thread is busy planning. Every animation
 honours `prefers-reduced-motion`.
 
+**Send it, sealed** sits under the timeline of your own plan. "Seal & send"
+opens an envelope with the letter standing in it: write a line (140 characters,
+optional), choose whether it stays a surprise, and the letter sinks, the flap
+closes and a wax seal presses on. The link then goes out through the phone's
+share sheet, or is copied. Their side is the same envelope, sealed; touching the
+seal lifts the flap and the letter, and "See the evening" opens the plan with
+your line on top (`envelope.js` in `ui/` and `lib/`).
+
+- **No server.** The plan is packed (deflate, base64url) into the URL fragment,
+  `#e=…`, which browsers never send to any server. A three-stop evening is
+  about 1.5 KB of link. Nothing is stored.
+- **Sealed is presentation, not encryption.** Anyone holding the link can open
+  it, so send it to one person. "Keep it a surprise" only stops the closed
+  envelope naming the evening.
+- **No prices.** A gift does not come with a receipt: costs, the budget line and
+  price warnings are left out of the link, and the pitch is trimmed to match.
+- **The link is untrusted input.** `unseal()` rebuilds every field from a
+  whitelist, caps lengths, accepts only http(s) URLs, and recomputes booking and
+  map links instead of carrying them. A bad link gets one plain sentence. The
+  receiver's own saved plan is never overwritten, and the fragment is cleared
+  when they plan one of their own.
+
 **Tune the night** sits under the timeline: budget, start time, length and
 dietary needs, then *Re-plan*. Dietary needs are real filters: `places.js`
 reads OpenStreetMap's `diet:*` tags, dinner prefers a kitchen tagged for all
@@ -282,12 +304,14 @@ docs/                 the app — this is what GitHub Pages serves
   ui/results.js       the plan page and the tune panel
   ui/hero.js          a stop opened into a full-screen detail view
   ui/swap.js          the 3D alternatives deck
+  ui/envelope.js      the sealed envelope: sealing one, breaking one open
   lib/net.js          fetch, session cache, the Nominatim rate gate
   lib/places.js       geocoding, category search, venue lookup, noise filter
   lib/weather.js      forecast, golden hour, typed overrides
   lib/wiki.js         photograph and blurb, with the coordinate guard
   lib/plan.js         slots, composition, the rules
   lib/links.js        booking and map links
+  lib/envelope.js     a plan packed into a link and back, with the untrusted-input rules
   lib/community.js    the community: sign-in, evenings, what the planner learns
   community-tab.js    the Community tab
   config.js           the Supabase project (empty = no Community tab)
@@ -296,6 +320,7 @@ docs/                 the app — this is what GitHub Pages serves
 supabase/schema.sql   the community's tables and every rule protecting them
 tools/mock-fetch.js   offline stand-in for every public API, for tests and screenshots
 tools/plan.test.mjs   Node tests for alternatives, swapping and diets (node tools/plan.test.mjs)
+tools/envelope.test.mjs  Node tests for the sealed envelope (node tools/envelope.test.mjs)
 ```
 
 ---

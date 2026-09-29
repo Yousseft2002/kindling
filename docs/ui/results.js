@@ -16,6 +16,8 @@ const mins = t => { const m = /^(\d{1,2}):(\d{2})$/.exec(t || ''); return m ? +m
 const hhmm = m => `${String(Math.floor(((m % 1440) + 1440) % 1440 / 60)).padStart(2, '0')}:${String(((m % 60) + 60) % 60).padStart(2, '0')}`;
 
 export function planHtml(d, { community = false } = {}) {
+  const shared = !!d.shared;   // opened from someone's sealed envelope
+  community = community && !shared;
   const p = d.plan, prefs = d.prefs, cur = prefs.currency;
   const money = n => n > 0 ? `${cur} ${Math.round(n)}` : 'Free';
   const when = prefs.date
@@ -29,7 +31,7 @@ export function planHtml(d, { community = false } = {}) {
   const cover = map || visual(p.stops.find(s => s.photo || s.lat != null) || p.stops[0] || {}, W, H);
 
   const chips = [p.adventure, prefs.localOnly ? 'Local only' : '',
-    `${money(p.totalCost)} for two`, wx.isKnown(d.weather) ? d.weather.summary : '']
+    shared ? '' : `${money(p.totalCost)} for two`, wx.isKnown(d.weather) ? d.weather.summary : '']
     .filter(Boolean).map(c => `<span class="chip-s">${esc(c)}</span>`).join('');
 
   const rows = p.stops.map((s, i) => `
@@ -38,7 +40,7 @@ export function planHtml(d, { community = false } = {}) {
         <span class="row-node" aria-hidden="true">${i + 1}</span>
         <div class="row-vis">${visual(s, 96, 96, 16)}</div>
         <div class="row-txt">
-          <p class="row-meta">${esc(s.start)}–${esc(endOf(s))} &middot; ${money(s.cost)}</p>
+          <p class="row-meta">${esc(s.start)}–${esc(endOf(s))}${shared ? '' : ` &middot; ${money(s.cost)}`}</p>
           <h3>${esc(s.name)}</h3>
           <p class="row-why">${esc(s.venueKind || s.kind)}${s.locals ? ' &middot; <span class="gold">Loved by locals</span>' : ''}</p>
         </div>
@@ -83,10 +85,12 @@ export function planHtml(d, { community = false } = {}) {
       </div>
     </section>
 
+    ${shared && d.note ? `<div class="card note-in"><p class="ev-hi">A line from them</p><p class="pitch">${esc(d.note)}</p></div>` : ''}
     <h4 class="sec">The evening <small>Tap a stop to open it</small></h4>
     <ol class="timeline">${rows}</ol>
 
-    ${tuneHtml(prefs)}
+    ${shared ? '' : sendHtml()}
+    ${shared ? '' : tuneHtml(prefs)}
     ${warn}
     ${insights}
     <div class="card notes">${notes}</div>
@@ -94,7 +98,18 @@ export function planHtml(d, { community = false } = {}) {
       from <b>Wikipedia</b>${community ? '; local picks from the <b>Kindling community</b>' : ''}.
       Booking links may earn a commission. Everything here is an
       estimate &mdash; check before you go.${community ? ' <a href="privacy.html">Privacy</a>' : ''}</p>
-    <button class="go" type="button" id="again" style="margin-top:20px">Plan another</button>`;
+    <button class="go" type="button" id="again" style="margin-top:20px">${shared ? 'Plan one back' : 'Plan another'}</button>`;
+}
+
+/* ---- send it, sealed ------------------------------------------------- */
+
+function sendHtml() {
+  return `
+    <section class="send card" aria-labelledby="send_t">
+      <h4 id="send_t" class="gold-h">Send it, sealed</h4>
+      <p class="detail">Wrap this evening in an envelope for your partner. One link; they break the seal to see it.</p>
+      <button class="cta wide" type="button" id="seal">Seal &amp; send</button>
+    </section>`;
 }
 
 /* ---- tune the night -------------------------------------------------- */

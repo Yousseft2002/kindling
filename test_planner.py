@@ -2087,6 +2087,23 @@ def test_static_app() -> None:
     check("the privacy page exists and is linked",
           (docs / "privacy.html").exists() and 'href="privacy.html"' in index)
 
+    # The sealed envelope: the plan rides in the link fragment, which no
+    # server ever sees. A network call here would break that promise, and an
+    # unescaped or unvetted URL field would turn a shared link into an attack.
+    env_lib = lib.get("envelope.js", "")
+    env_ui = ui.get("envelope.js", "")
+    check("the envelope module exists and is precached",
+          bool(env_lib) and bool(env_ui) and "at('lib/envelope.js')" in sw and "at('ui/envelope.js')" in sw)
+    check("the envelope travels in the fragment and makes no network call",
+          "'#e='" not in env_lib and "#e=" in env_lib and "fetch(" not in env_lib + env_ui)
+    check("a link's URLs are vetted to http(s) and links are rebuilt, not carried",
+          "https?:" in env_lib and "attachLinks(" in env_lib
+          and "bookUrl" not in env_lib.split("const STOP")[1].split("};")[0])
+    check("the envelope overlay opens without requestAnimationFrame",
+          "requestAnimationFrame(" not in env_ui)
+    check("the results page offers to seal and send, but not on a received plan",
+          'id="seal"' in ui["results.js"] and "shared ? '' : sendHtml()" in ui["results.js"])
+
     # An invented affiliate tag does not earn money - it breaks the link and
     # can close the account.
     partners = _re.search(r"PARTNERS = \{([^}]*)\}", lib["links.js"]).group(1)
