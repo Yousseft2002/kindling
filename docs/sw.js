@@ -31,6 +31,8 @@ const SHELL = [
   at('lib/links.js'),
   at('lib/community.js'),
   at('lib/envelope.js'),
+  at('lib/fmt.js'),
+  at('lib/outing.js'),
   at('ui/spring.js'),
   at('ui/tiles.js'),
   at('ui/invitation.js'),

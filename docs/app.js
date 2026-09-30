@@ -2,7 +2,7 @@ import * as places from './lib/places.js';
 import * as wx from './lib/weather.js';
 import * as community from './lib/community.js';
 import { build, swapStop, photograph, STAGES, STYLES, TRANSPORT, ADVENTURE } from './lib/plan.js';
-import { initCommunity, openCommunity } from './community-tab.js';
+import { initCommunity, openCommunity, toast } from './community-tab.js';
 import { openInvitation } from './ui/invitation.js';
 import { openStop, refreshStop, close as closeStop, isOpen as stopOpen } from './ui/hero.js';
 import { openSwap } from './ui/swap.js';
@@ -11,9 +11,10 @@ import { revealTiles } from './ui/tiles.js';
 import { springTo } from './ui/spring.js';
 import { openSeal, openReceived } from './ui/envelope.js';
 import { tokenFrom, unseal } from './lib/envelope.js';
+import { esc } from './lib/fmt.js';
+import { asICS, asText, icsName } from './lib/outing.js';
 
 const $ = s => document.querySelector(s);
-const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const LAST_PLAN = 'kindling.lastplan';
 const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -525,6 +526,7 @@ function show(d, { quiet = false } = {}) {
   $('#locals_more')?.addEventListener('click', () => openCommunity(here));
   $('#locals_share')?.addEventListener('click', () => openCommunity(here, 'share'));
   $('#seal')?.addEventListener('click', () => openSeal({ data: current }));
+  wireTake(d);
 
   out.querySelectorAll('.row').forEach(r => r.addEventListener('click', () => openRow(+r.dataset.i)));
   wireTune(out, prefs, changes => {
@@ -568,6 +570,47 @@ function stopCtx(i) {
     canSwap: !!(s.slot && s.alts?.length),
     onSwap: swapAt,
   };
+}
+
+/* ---- take it with you ------------------------------------------------ */
+
+/* Two of the three ways out need code; the third is a link and needs none.
+ *
+ * Both of these can fail for reasons that are nobody's fault - a browser
+ * with no clipboard permission, a webview that blocks downloads - so both
+ * say what happened rather than doing nothing. */
+function wireTake(d) {
+  $('#to_cal')?.addEventListener('click', () => {
+    try {
+      const file = new Blob([asICS(d.plan, d.prefs)], { type: 'text/calendar;charset=utf-8' });
+      const url = URL.createObjectURL(file);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = icsName(d.prefs);
+      a.click();
+      // Revoking straight away races the download on some browsers.
+      setTimeout(() => URL.revokeObjectURL(url), 30000);
+      toast('Evening saved to your calendar file.');
+    } catch {
+      toast('Could not make the calendar file here.');
+    }
+  });
+
+  $('#to_txt')?.addEventListener('click', async () => {
+    const text = asText(d.plan, d.prefs);
+    try {
+      await navigator.clipboard.writeText(text);
+      toast('Copied. Paste it to them.');
+    } catch {
+      // No clipboard: hand over the share sheet, and if that is missing too,
+      // say so rather than leaving the button looking broken.
+      try {
+        await navigator.share({ text });
+      } catch {
+        toast('Copying is blocked here - long-press a stop to copy by hand.');
+      }
+    }
+  });
 }
 
 function openRow(i) { openStop(stopCtx(i)); }

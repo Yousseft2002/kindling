@@ -958,6 +958,13 @@
   .ev-status{margin:10px 0 0;min-height:1.2em;text-align:center;color:var(--gold);font-size:14px}
   #ev_go{max-width:380px}
   .send .detail{margin:0}
+  /* Take it with you: three ways out, wrapping to one per line on a narrow
+     phone rather than squeezing below the 44px touch target. */
+  .take .detail{margin:0 0 14px}
+  .take-row{display:flex;flex-wrap:wrap;gap:10px}
+  .take-row .btn{flex:1 1 auto;text-align:center;min-height:44px;
+                 display:inline-flex;align-items:center;justify-content:center}
+  .take-row .btn:active{transform:scale(.97)}
   .note-in{margin-top:18px}
   .note-in .ev-hi{color:var(--gold);opacity:.8}
   .note-in .pitch{margin:0}

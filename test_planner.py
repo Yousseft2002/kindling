@@ -1951,6 +1951,27 @@ def test_static_app() -> None:
           all(f"at('ui/{n}')" in sw for n in ui), str([n for n in ui if f"at('ui/{n}')" not in sw]))
     check("the springs honour reduced motion", "prefers-reduced-motion" in ui["spring.js"])
 
+    # One escaper, imported. Seven modules each carried a byte-identical copy,
+    # which is a rule with seven chances to be wrong - and escaping is the one
+    # standing between a venue name and an injected tag.
+    own = [n for n, t in {**lib, **ui, "app.js": app,
+                          "community-tab.js": (docs / "community-tab.js").read_text(encoding="utf-8")}.items()
+           if "const esc = s =>" in t and n != "fmt.js"]
+    check("only fmt.js defines esc", not own, str(own))
+    check("fmt.js is where it is defined", "export const esc" in lib["fmt.js"])
+
+    # Taking the evening out of the app: calendar, message, route. Pure
+    # functions, so they work offline and on a plan restored from storage.
+    outing = lib["outing.js"]
+    for name in ("asICS", "asText", "routeUrl", "icsName"):
+        check(f"outing.js exports {name}", f"export function {name}" in outing)
+    check("the calendar file is CRLF, as the spec requires",
+          "join('\\r\\n')" in outing)
+    check("outing.js touches no network",
+          "fetch(" not in outing and "XMLHttpRequest" not in outing)
+    check("outing.js touches no document, so a saved plan can use it",
+          "document." not in outing and "window." not in outing)
+
     # Nothing in the UI may wait on an animation that a hidden page will
     # never finish.
     #

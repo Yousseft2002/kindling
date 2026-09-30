@@ -13,8 +13,8 @@
 import { springTo, riseIn, settled, REDUCED } from './spring.js';
 import { visual, revealTiles } from './tiles.js';
 import { endOf, walkTime } from '../lib/plan.js';
+import { esc } from '../lib/fmt.js';
 
-const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 export const DIET_LABEL = { vegetarian: 'Vegetarian', vegan: 'Vegan', gluten_free: 'Gluten-free',
                             halal: 'Halal', kosher: 'Kosher' };
 

@@ -14,8 +14,8 @@
  */
 
 import { springTo, riseIn, REDUCED } from './spring.js';
+import { esc } from '../lib/fmt.js';
 
-const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 
 const STEPS = [
   { k: 'place',   icon: '◎', title: 'The place',          wait: 'Finding it on the map' },
