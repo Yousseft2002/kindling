@@ -12,7 +12,7 @@
  * and would cache the wrong thing, or nothing at all.
  */
 
-const VERSION = 'kindling-v7';
+const VERSION = 'kindling-v8';
 const ROOT = new URL('./', self.location);           // .../kindling/
 const at = path => new URL(path, ROOT).toString();
 
