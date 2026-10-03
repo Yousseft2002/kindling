@@ -103,10 +103,11 @@ plan once sent you to a museum that closes at four), whatever shuts first goes
 first, a visit ends at closing time rather than after it, dinner stays last,
 and anything that still overruns is flagged rather than hidden. The closing-time
 cut happens *after* the evening is trimmed to its window, or dinner gets
-shortened for a stop that is then cut anyway. `closesAt()` takes the last
-clock time in an OSM `opening_hours` string, which is the closing time in every
-common shape; a result before noon means it shuts after midnight, which is
-treated as no limit. It does not read which day each time belongs to yet.
+shortened for a stop that is then cut anyway. Hours are read for the selected
+weekday. Open plans also check the actual visit against common opening
+intervals, including split shifts and overnight windows, and recheck nearby
+options after measuring travel. Unknown or unusually complex hours still need
+confirmation; these are feasibility estimates, not reservation availability.
 
 **Travel is measured, not assumed.** Every hop used to say "A few minutes on
 foot" and cost twelve minutes, including a Lisbon transit plan with stops 5 km

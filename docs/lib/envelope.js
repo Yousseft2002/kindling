@@ -36,7 +36,7 @@ const choice = values => v => values.includes(v) ? v : '';
 const VENUE = {
   name: str(120), lat: coord(90), lon: coord(180), kind: str(60), cuisine: str(80),
   openingHours: str(200), website: url, address: str(200), diet: list(6, str(24)),
-  photo: url, blurb: str(320), photoCredit: url,
+  photo: url, blurb: str(320), photoCredit: url, sessionStart: time,
 };
 
 const STOP = {

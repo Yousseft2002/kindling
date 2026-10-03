@@ -50,12 +50,12 @@ export function planHtml(d, { community = false } = {}) {
     return `
     <li class="tl-item" style="--i:${i}">
       <button class="row" type="button" data-i="${i}" aria-label="${esc(label)}, ${esc(time)}. Open ${openIdea ? 'idea and possible places' : 'details'}">
-        <span class="row-node" aria-hidden="true">${flexible && s.role === 'optional' ? '+' : i + 1}</span>
+        <span class="row-node" aria-hidden="true">${s.role === 'optional' ? '+' : i + 1}</span>
         <div class="row-vis">${visual(openIdea ? { kind: s.kind } : s, 96, 96, 16)}</div>
         <div class="row-txt">
           <p class="row-meta">${esc(time)}${shared ? '' : ` &middot; ${esc(openIdea ? rough(s.cost) : money(s.cost))}`}</p>
           <h3>${esc(label)}</h3>
-          <p class="row-why">${flexible && s.role === 'optional' ? 'Optional · only if you feel like it' : openIdea ? 'Choose the place on the night' : esc(s.venueKind || s.kind)}${!openIdea && s.locals ? ' &middot; <span class="gold">Loved by locals</span>' : ''}</p>
+          <p class="row-why">${s.role === 'optional' ? 'Optional · only if you feel like it' : openIdea ? 'Choose the place on the night' : esc(s.venueKind || s.kind)}${!openIdea && s.locals ? ' &middot; <span class="gold">Loved by locals</span>' : ''}</p>
         </div>
         <span class="chev" aria-hidden="true">&#8250;</span>
       </button>

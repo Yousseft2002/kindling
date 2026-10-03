@@ -3,7 +3,7 @@
 import './mock-fetch.js';
 import assert from 'node:assert/strict';
 const { build, swapStop, rank, slotsFor, setPlanMode, venueOptions, respectHours, leg } = await import('../docs/lib/plan.js');
-const { invitationSummary, ideaLabel, ideaTime } = await import('../docs/lib/ideas.js');
+const { invitationSummary, ideaLabel, ideaTime, ideaPitch } = await import('../docs/lib/ideas.js');
 const { isOpenFor } = await import('../docs/lib/places.js');
 
 const prefs = {
@@ -22,12 +22,22 @@ const plan = await build(prefs, weather, (label, info) => phases.push([label, in
 ok('plan has two core ideas with at most one extension', () => assert.ok(plan.stops.length >= 2 && plan.stops.length <= 3));
 ok('plans default to open with a broad, supplied area', () => {
   assert.equal(plan.planMode, 'open'); assert.equal(plan.area, 'Boston');
-  assert.ok(plan.stops.every(s => s.idea && !s.specific && !s.timeSensitive));
+  assert.ok(plan.stops.every(s => s.idea && !s.timeSensitive));
+  assert.ok(plan.stops.filter(s => s.specific).every(s => s.specificReason && s.kind !== 'food'));
   assert.equal(plan.stops[0].role, 'core');
   assert.equal(plan.stops.find(s => s.kind === 'food').role, 'next');
+  assert.equal(plan.stops.find(s => s.kind === 'food').specific, false);
 });
 ok('open title and pitch lead with concepts, not evidence venue names', () => {
   plan.stops.forEach(s => { assert.ok(!plan.title.includes(s.name)); assert.ok(!plan.pitch.includes(s.name)); });
+  assert.equal(plan.title, 'Art & Dinner');
+  assert.match(plan.pitch, /^Start with art & galleries, then dinner nearby\./);
+  assert.ok(plan.pitch.includes('conversation'));
+  assert.ok(!plan.pitch.includes('You, Me,'));
+  const dinner = plan.stops.find(s => s.kind === 'food');
+  assert.match(dinner.why, /^Find somewhere nearby/);
+  assert.ok(!/anchor|warm-up|worth booking/i.test(dinner.why));
+  assert.ok(dinner.venueWhy);
 });
 ok('progress reports each venue found', () =>
   assert.ok(phases.filter(([, i]) => i?.found).length >= 2));
@@ -43,6 +53,7 @@ ok('plan survives a JSON round-trip (it is saved to localStorage)', () =>
 const i = plan.stops.indexOf(dinner);
 const before = { name: dinner.name, start: dinner.start, minutes: dinner.minutes, cost: dinner.cost,
   idea: dinner.idea, role: dinner.role };
+const beforeSpecific = plan.stops.map(s => s.specific);
 const alt = dinner.alts[0];
 swapStop(plan, i, alt, prefs, weather);
 const now = plan.stops[i];
@@ -59,7 +70,7 @@ ok('open option pick fixes only its venue while preserving the concept, role and
   assert.ok(!plan.pitch.includes(now.name)); assert.equal(now.specific, true);
   assert.equal(plan.planMode, 'open');
   assert.equal(now.idea, before.idea); assert.equal(now.role, before.role);
-  assert.ok(plan.stops.filter((_, n) => n !== i).every(s => !s.specific));
+  assert.ok(plan.stops.every((s, n) => n === i || s.specific === beforeSpecific[n]));
 });
 ok('untagged kitchen gets an honest call-ahead warning', () => {
   if (!now.diet.includes('vegetarian')) assert.ok(plan.warnings.some(w => w.includes(now.name)));
@@ -91,6 +102,15 @@ ok('invitation is the exact broad clay-painting sentence in either mode', () => 
   concept.planMode = 'specific';
   concept.stops[0].name = 'Named Studio';
   assert.equal(invitationSummary(concept, prefs), 'You, Me, Clay Painting & dinner in Boston.');
+});
+ok('category invitations stay natural without nested conjunctions or venue names', () => {
+  const invite = first => invitationSummary({ stops: [first, { kind: 'food' }] }, prefs);
+  assert.equal(invite({ slot: 'activity' }), 'You, Me, Art & dinner in Boston.');
+  assert.equal(invite({ slot: 'viewpoint' }), 'You, Me, Scenic Walk & dinner in Boston.');
+  assert.equal(invite({ slot: 'hill' }), 'You, Me, Sunset & dinner in Boston.');
+  assert.equal(invite({ idea: 'A sunset walk' }), 'You, Me, Sunset & dinner in Boston.');
+  assert.equal(invite({ slot: 'shopping', venueKind: 'Bookshop' }), 'You, Me, Bookstore Browsing & dinner in Boston.');
+  assert.equal(invite({ slot: 'shopping', venueKind: 'Market' }), 'You, Me, Market Browsing & dinner in Boston.');
 });
 ok('invitations survive old plans, no venues and no restaurant without inventing dinner', () => {
   assert.equal(invitationSummary({ stops: [{ kind: 'coffee' }] }, prefs), 'You, Me, Coffee in Boston.');
@@ -129,6 +149,53 @@ ok('options enforce radius, both neighboring hops and actual reflowed visit wind
   const names = venueOptions({ stops: [a, b, c] }, 1, choicePrefs).map(v => v.name);
   assert.deepEqual(names, ['Current', 'Good']);
   assert.ok(leg(b.alts[2], c, 'walking').minutes > 15);
+});
+ok('confirmed session times anchor the real schedule and survive current-evidence swaps', () => {
+  const session = { ...evidence('Ceramic session'), slot: 'pottery', sessionStart: '18:35', minutes: 70 };
+  const dinner = { ...evidence('Session dinner'), slot: 'food', kind: 'food', role: 'next', minutes: 95 };
+  const timed = { stops: [session, dinner] };
+  setPlanMode(timed, 'open', choicePrefs, weather);
+  assert.equal(timed.stops[0].start, '18:35');
+  assert.equal(timed.stops[1].start, '19:50');
+  assert.equal(timed.stops[0].timeSensitive, true);
+  const current = venueOptions(timed, 0, choicePrefs)[0];
+  assert.equal(current.sessionStart, '18:35');
+  swapStop(timed, 0, current, choicePrefs, weather);
+  assert.equal(timed.stops[0].start, '18:35');
+  assert.equal(timed.stops[0].sessionStart, '18:35');
+  assert.equal(timed.stops[0].specific, true);
+  assert.equal(timed.stops[1].specific, false);
+});
+ok('session alternatives reject impossible arrivals and full sessions extending past closing', () => {
+  const first = { ...evidence('Before session'), start: '17:30' };
+  const current = { ...evidence('Flexible visit'), role: 'next' };
+  const dinner = { ...evidence('After session'), slot: 'food', kind: 'food', role: 'next' };
+  current.alts = [
+    { ...evidence('Too early session'), sessionStart: '18:00' },
+    { ...evidence('Feasible session'), sessionStart: '20:00' },
+    { ...evidence('Session closes halfway', 42, -71, 'Mo-Su 12:00-20:30'), sessionStart: '20:00' },
+  ];
+  assert.deepEqual(venueOptions({ stops: [first, current, dinner] }, 1, choicePrefs).map(v => v.name),
+    ['Flexible visit', 'Feasible session']);
+  const closed = { stops: [{ ...evidence('Whole session', 42, -71, 'Mo-Su 12:00-19:00'),
+    sessionStart: '18:35', minutes: 70 }] };
+  setPlanMode(closed, 'open', choicePrefs, weather);
+  assert.equal(closed.stops.length, 0);
+});
+ok('unscheduled alternatives do not inherit a later class time to fake opening-window feasibility', () => {
+  const first = { ...evidence('Before the class'), start: '17:30' };
+  const session = { ...evidence('Later class'), sessionStart: '20:00', role: 'next', alts: [
+    evidence('Open at ordinary arrival', 42, -71, 'Mo-Su 18:00-23:00'),
+    evidence('Only open by inherited class time', 42, -71, 'Mo-Su 19:00-23:00'),
+  ] };
+  const dinner = { ...evidence('Dinner after class'), slot: 'food', kind: 'food', role: 'next' };
+  const timed = { planMode: 'open', stops: [first, session, dinner] };
+  assert.deepEqual(venueOptions(timed, 1, choicePrefs).map(v => v.name),
+    ['Later class', 'Open at ordinary arrival']);
+  swapStop(timed, 1, session.alts[0], choicePrefs, weather);
+  assert.equal(timed.stops[1].sessionStart, '');
+  assert.equal(timed.stops[1].timeSensitive, false);
+  assert.equal(timed.stops[1].start, '18:35');
 });
 ok('optional extension remains after dinner even when it closes earlier', () => {
   const stops = [evidence('Activity'), { ...evidence('Dinner'), kind: 'food', role: 'next' },
@@ -173,11 +240,37 @@ ok('choosing the current evidence fixes that item without changing the open plan
   assert.equal(copy.stops[0].idea, idea); assert.equal(copy.stops[0].role, role);
   assert.equal(copy.stops[0].specific, true);
   assert.ok(copy.stops.slice(1).every(s => !s.specific));
+  swapStop(copy, 1, venueOptions(copy, 1, prefs)[0], prefs, weather);
+  assert.equal(copy.stops[0].specific, true);
+  assert.equal(copy.stops[1].specific, true);
+  assert.equal(copy.planMode, 'open');
+});
+ok('old saved plans without a mode stay specific after swaps', () => {
+  const first = evidence('Old gallery');
+  first.alts = [evidence('Old alternative')];
+  const old = { stops: [first, { ...evidence('Old restaurant'), slot: 'food', kind: 'food' }] };
+  swapStop(old, 0, first.alts[0], choicePrefs, weather);
+  assert.equal(old.planMode, 'specific');
+  assert.ok(old.stops.every(s => s.specific));
+  assert.ok(old.pitch.includes('Old alternative') && old.pitch.includes('USD'));
+});
+ok('open walkers keep their strict radius and never inherit a silent outdoor drive', () => {
+  const far = { ...evidence('Far hill', 42.03), slot: 'hill', kind: 'outdoors', minutes: 40 };
+  const dinner = { ...evidence('Nearby dinner'), slot: 'food', kind: 'food', role: 'next' };
+  const loose = { stops: [{ ...far }, { ...dinner }] };
+  setPlanMode(loose, 'open', choicePrefs, weather);
+  assert.ok(!loose.stops.some(s => s.name === far.name));
+  assert.ok(loose.stops.every(s => !s.drive));
+  const legacy = { stops: [{ ...far }, { ...dinner }] };
+  setPlanMode(legacy, 'specific', choicePrefs, weather);
+  assert.ok(legacy.stops.some(s => s.name === far.name));
+  assert.equal(legacy.stops[0].drive, true);
 });
 
 // Distinct origins avoid the real memo cache; every response is still offline.
 const fixtureFetch = globalThis.fetch;
-let fallbackPlan, noDinnerPlan, emptyPlan, clayPlan, specificPlan;
+let fallbackPlan, noDinnerPlan, emptyPlan, clayPlan, specificPlan, noOpeningPlan,
+  aquariumPlan, onlyActivityPlan, confirmedPlan, nightInPlan;
 try {
   let scenario = 'closed';
   globalThis.fetch = async (input, init) => {
@@ -187,12 +280,16 @@ try {
     const q = url.searchParams.get('q');
     let records = await response.json();
     if (scenario === 'empty' || (scenario === 'no dinner' && ['restaurant', 'bistro'].includes(q))) records = [];
+    if (scenario === 'no opening' && ['museum', 'gallery', 'cafe', 'coffee shop', 'bar', 'pub', 'marketplace', 'bookshop'].includes(q)) records = [];
+    if (scenario === 'one activity' && q === 'museum') records = records.slice(0, 1);
+    if (scenario === 'one activity' && q === 'gallery') records = [];
     if (scenario === 'closed' && ['museum', 'gallery'].includes(q)) {
       records.forEach(r => { r.extratags.opening_hours = 'Mo-Su 09:00-16:00'; });
     }
-    if (scenario === 'clay' && q === 'pottery') {
+    if ((scenario === 'clay' && q === 'pottery') || (scenario === 'aquarium' && q === 'aquarium')) {
       const box = url.searchParams.get('viewbox').split(',').map(Number);
-      records = [{ name: 'Real Ceramic Studio', type: 'arts_centre', category: 'amenity',
+      records = [{ name: scenario === 'clay' ? 'Real Ceramic Studio' : 'Real Aquarium',
+        type: scenario === 'clay' ? 'arts_centre' : 'aquarium', category: 'amenity',
         lat: String((box[1] + box[3]) / 2), lon: String((box[0] + box[2]) / 2),
         extratags: { opening_hours: 'Mo-Su 12:00-23:00' } }];
     }
@@ -207,6 +304,18 @@ try {
   clayPlan = await build({ ...prefs, lat: 42.41, stage: 'first_date', interests: ['clay painting'] }, weather);
   scenario = 'specific';
   specificPlan = await build({ ...prefs, lat: 42.42, stage: 'first_date', planMode: 'specific' }, weather);
+  scenario = 'no opening';
+  noOpeningPlan = await build({ ...prefs, lat: 42.43 }, weather);
+  scenario = 'aquarium';
+  aquariumPlan = await build({ ...prefs, lat: 42.44, interests: ['aquarium'], stage: 'first_date' }, weather);
+  scenario = 'one activity';
+  onlyActivityPlan = await build({ ...prefs, lat: 42.45, stage: 'first_date' }, weather);
+  scenario = 'confirmed';
+  confirmedPlan = await build({ ...prefs, lat: 42.46, stage: 'first_date' }, weather, () => {}, {
+    picks: [{ name: 'Listed art session', kind: 'activity', lat: 42.46, lon: prefs.lon,
+      sessionStart: '18:35', notes: [], posts: 1, loves: 1 }],
+  });
+  nightInPlan = await build({ ...prefs, lat: 42.47, adventure: 1 }, weather);
 } finally {
   globalThis.fetch = fixtureFetch;
 }
@@ -234,11 +343,61 @@ ok('explicit specific requests expose verified names while invitations remain br
   assert.ok(specificPlan.pitch.includes(specificPlan.stops[0].name));
   assert.ok(!invitationSummary(specificPlan, prefs).includes(specificPlan.stops[0].name));
 });
+ok('skipped unavailable openers reassign core roles without promoting an optional closer', () => {
+  assert.equal(noOpeningPlan.stops.length, 1);
+  assert.equal(noOpeningPlan.stops[0].kind, 'food');
+  assert.equal(noOpeningPlan.stops[0].role, 'core');
+  assert.ok(noOpeningPlan.warnings.some(w => w.includes('No feasible opening idea')));
+});
+ok('clay title and rationale are concept-first, with a human optional invitation-free pitch', () => {
+  assert.equal(clayPlan.title, 'Clay Painting & Dinner');
+  assert.equal(clayPlan.pitch, 'Start with clay painting, then dinner nearby. Make something together before you settle in to talk.');
+  const withExtension = { ...clayPlan, stops: [...clayPlan.stops, { ...evidence('Music'), slot: 'music', kind: 'music', role: 'optional' }] };
+  assert.ok(ideaPitch(withExtension).includes('Keep live music optional'));
+});
+ok('new open builds retain warranted aquarium, single-activity and confirmed-session anchors without fixing dinner', () => {
+  for (const warranted of [aquariumPlan, onlyActivityPlan, confirmedPlan]) {
+    assert.equal(warranted.planMode, 'open');
+    assert.equal(warranted.stops[0].specific, true);
+    assert.ok(warranted.stops[0].specificReason);
+    assert.equal(warranted.stops.find(s => s.kind === 'food').specific, false);
+    assert.ok(!invitationSummary(warranted, prefs).includes(warranted.stops[0].name));
+  }
+  assert.equal(aquariumPlan.stops[0].name, 'Real Aquarium');
+  assert.equal(aquariumPlan.stops[0].specificReason, 'You asked for an aquarium.');
+  assert.match(onlyActivityPlan.stops[0].specificReason, /Only one feasible activity/);
+  assert.equal(confirmedPlan.stops[0].sessionStart, '18:35');
+  assert.equal(confirmedPlan.stops[0].start, '18:35');
+  assert.equal(confirmedPlan.stops[0].timeSensitive, true);
+});
+ok('a night-in film is required in fresh plans and old optional-home records normalize on mode changes', () => {
+  for (const stage of ['first_date', 'getting_to_know']) {
+    assert.deepEqual(slotsFor({ ...prefs, adventure: 1, stage }, weather), ['takeout', 'home']);
+  }
+  const home = nightInPlan.stops.find(s => s.kind === 'home');
+  assert.ok(home);
+  assert.equal(home.role, 'next');
+  const saved = JSON.parse(JSON.stringify(nightInPlan));
+  saved.stops.find(s => s.kind === 'home').role = 'optional';
+  setPlanMode(saved, 'specific', { ...prefs, lat: 42.47 }, weather);
+  assert.equal(saved.stops.find(s => s.kind === 'home').role, 'next');
+  setPlanMode(saved, 'open', { ...prefs, lat: 42.47 }, weather);
+  assert.equal(saved.stops.find(s => s.kind === 'home').role, 'next');
+});
 
 /* ---- taking it with you ---------------------------------------------- */
 
 const { asICS, asText, routeUrl, icsName } = await import('../docs/lib/outing.js');
 setPlanMode(plan, 'specific', prefs, weather);
+ok('the single open night-in calendar hold lasts through the required film, not just takeout', () => {
+  const home = nightInPlan.stops.find(s => s.kind === 'home');
+  const endMinutes = +home.start.slice(0, 2) * 60 + +home.start.slice(3) + home.minutes;
+  const end = String(Math.floor(endMinutes / 60)).padStart(2, '0') + String(endMinutes % 60).padStart(2, '0') + '00';
+  const c = asICS(nightInPlan, prefs);
+  assert.equal((c.match(/BEGIN:VEVENT/g) || []).length, 1);
+  assert.ok(c.includes(`DTEND:${prefs.date.replace(/-/g, '')}T${end}`));
+  assert.ok(c.replace(/\r\n /g, '').includes('A film at home'));
+});
 
 const cal = asICS(plan, prefs);
 ok('the calendar has one event per stop', () =>

@@ -213,16 +213,17 @@ function markup({ stop: s, index, money, canSwap, flexible, softTiming, options 
     </div>
     <button class="hv-close" type="button" aria-label="Back to the evening">&#8592;</button>
     <div class="hv-over">
-      <p class="eyebrow">Stop ${index + 1} &middot; ${esc(softTiming ? ideaTime(s, index) : `${s.start}–${endOf(s)}`)}</p>
+      <p class="eyebrow">${s.role === 'optional' ? 'Optional extension' : `Stop ${index + 1}`} &middot; ${esc(softTiming ? ideaTime(s, index) : `${s.start}–${endOf(s)}`)}</p>
       <h2>${esc(s.name)}</h2>
       <p class="hv-kind">${[s.venueKind, facts].filter(Boolean).map(esc).join(' &middot; ')}</p>
     </div>
     <div class="hv-panel">
       <div class="hv-stats">
-        <div><small>${softTiming ? 'When' : 'Arrive'}</small><b>${esc(softTiming ? ideaTime(s, index) : s.start)}</b></div>
+        <div><small>${s.role === 'optional' ? 'If you go' : softTiming ? 'When' : 'Arrive'}</small><b>${esc(softTiming ? ideaTime(s, index) : s.start)}</b></div>
         <div><small>Stay</small><b>${softTiming ? 'About ' : ''}${Math.round(s.minutes)} min</b></div>
         ${money ? `<div><small>Budget</small><b>${esc(money(s.cost))}</b></div>` : ''}
       </div>
+      ${s.role === 'optional' ? '<p class="detail">Only if you feel like it. Choosing a place does not commit you to this extension.</p>' : ''}
       <p class="insight-line"><span aria-hidden="true">✦</span> ${esc(s.why)}</p>
       ${s.tip ? `<p class="insight-line soft">${esc(s.tip)}</p>` : ''}
       ${diet ? `<div class="tags">${diet}</div>` : ''}

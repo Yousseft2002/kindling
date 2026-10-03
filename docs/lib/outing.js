@@ -159,7 +159,7 @@ export function asText(plan, prefs = {}) {
     if (plan.planMode === 'open') {
       out.push(`${s.role === 'optional' ? 'Optional: ' : ''}${s.specific ? s.name : s.idea || s.kind} — ${ideaTime(s, i)}`);
       if (s.specific && s.address) out.push(`        ${s.address}`);
-      if (s.closingTime) out.push(`        Closes at ${s.closingTime}; check before heading out.`);
+      if (s.closingTime) out.push(`        ${s.specific ? 'Closes at' : 'A researched option closes at'} ${s.closingTime}; check before heading out.`);
       if (s.daylightUntil) out.push(`        Keep the outdoor part before sunset, around ${s.daylightUntil}.`);
       continue;
     }

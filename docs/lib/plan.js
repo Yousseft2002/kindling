@@ -8,7 +8,7 @@
  */
 
 import { nearby, lookup, closesAt, isOpenFor, isChain } from './places.js';
-import { ideaLabel, invitationSummary } from './ideas.js';
+import { ideaLabel, ideaTitle, ideaPitch, ideaWhy } from './ideas.js';
 import { look as wikiLook } from './wiki.js';
 import * as wx from './weather.js';
 import { distanceKm } from './net.js';
@@ -202,6 +202,8 @@ const NIGHTCAP = ['One more, somewhere quieter, before you call it a night.',
 const hhmm = m => `${String(Math.floor(m / 60) % 24).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
 const mins = s => { const [h, m] = String(s).split(':').map(Number);
                     return Number.isFinite(h) && Number.isFinite(m) ? h * 60 + m : null; };
+const sessionAt = s => /^([01]\d|2[0-3]):[0-5]\d$/.test(s.sessionStart || '')
+  ? mins(s.sessionStart) : null;
 export const endOf = stop => hhmm((mins(stop.start) ?? 0) + stop.minutes);
 
 export const walkTime = s => !s.distanceM ? ''
@@ -323,15 +325,18 @@ export async function build(prefs, weather, onPhase = () => {}, locals = null) {
     // only has to be open for half an hour after the evening starts. Dinner
     // always ends the night, so it has to stay open to the end of it.
     const optional = i > 1 && slots[1] === 'food' && slot !== 'food';
+    if (optional && stops.filter(s => s.role !== 'optional').length < 2) continue;
     const needUntil = slot === 'food' || optional ? t + minutes : opening + 30;
     let venue = null, ranked = [];
     if (slot !== 'home') {
       const hits = await nearby(slot, prefs.lat, prefs.lon, prefs.transport, 6);
       const outdoor = AS_KIND[slot] === 'outdoors';
-      ranked = rank(withLocals(hits, slot, locals, prefs).filter(v => reachable(v, prefs, outdoor)
+      const outdoorDrive = prefs.planMode === 'specific';
+      ranked = rank(withLocals(hits, slot, locals, prefs).filter(v => reachable(v, prefs, outdoor && outdoorDrive)
                       && (!from || reasonableHop(from, v, prefs.transport)
-                        || ((outdoor || OUTSIDE.has(stops.at(-1)?.kind)) && prefs.transport === 'walking'
+                        || (outdoorDrive && (outdoor || OUTSIDE.has(stops.at(-1)?.kind)) && prefs.transport === 'walking'
                           && reasonableHop(from, v, 'car')))
+                      && (sessionAt(v) == null || sessionAt(v) >= t)
                       && isOpenFor(v.openingHours, slot === 'food' || optional ? t : opening, needUntil, weekday)), used,
                     { from, needUntil, known, localOnly: prefs.localOnly,
                       diet: FED.has(slot) ? (prefs.diet || []) : [] });
@@ -367,7 +372,7 @@ export async function build(prefs, weather, onPhase = () => {}, locals = null) {
     const stop = slot === 'home' ? homeStop(prefs, t, minutes)
       : venue ? realStop(chosenSlot, venue, prefs, t, minutes, cost, last)
       : placeholder(slot, prefs, t, minutes, cost, last);
-    stop.role = i === 0 ? 'core' : (i === 1 || slot === 'food') ? 'next' : 'optional';
+    stop.role = i === 0 ? 'core' : (i === 1 || slot === 'food' || slot === 'home') ? 'next' : 'optional';
     // The runners-up, kept so a stop can be swapped without planning again.
     // Plain venue records: the plan is saved to localStorage whole.
     stop.alts = ranked.slice(1, 1 + ALTS);
@@ -390,8 +395,8 @@ export async function build(prefs, weather, onPhase = () => {}, locals = null) {
   // Daylight is a closing time too, for anything outside.
   const sunset = weather?.sunset ?? null;
   respectHours(stops, sunset);
-  legs(stops, prefs.transport);
-  fitWindow(stops, Math.min(stage.maxHours, prefs.hours), prefs.transport, keep);
+  legs(stops, prefs.transport, prefs.planMode === 'specific');
+  fitWindow(stops, Math.min(stage.maxHours, prefs.hours), prefs.transport, keep, prefs.planMode === 'specific');
   closeOnTime(stops, sunset);
   retell(stops);
   const feasibilityNotes = prefs.planMode !== 'specific' ? pruneInfeasible(stops, prefs, weather) : [];
@@ -418,24 +423,30 @@ export async function build(prefs, weather, onPhase = () => {}, locals = null) {
       loves: p.love_count || 0, city: p.city, stops: (p.stops || []).map(s => s.name),
     })),
   };
-  return finish(plan, prefs, weather);
+  return finish(plan, prefs, weather, true);
 }
 
 /** Everything about a plan that is worked out from its stops: the title and
  *  pitch, the totals, the notes, the links and the checks. Split out so a
  *  swapped stop is described exactly as a planned one would have been. */
-function finish(plan, prefs, weather) {
+function finish(plan, prefs, weather, warrantAnchors = false) {
   const stops = plan.stops;
   const total = stops.reduce((a, s) => a + s.cost, 0);
   const named = stops.filter(s => s.verified).map(s => s.name);
   const anchorStop = stops.find(s => ['activity', 'music', 'show', 'outdoors'].includes(s.kind) && s.verified);
   const where = (prefs.location || '').split(',')[0];
   const home = stops.some(s => s.kind === 'home');
-  plan.planMode = plan.planMode === 'specific' ? 'specific' : 'open';
+  plan.planMode = plan.planMode === 'open' ? 'open' : 'specific';
   plan.area = plan.area || String(prefs.location || '').split(',')[0].trim();
+  let coreIndex = 0;
   stops.forEach((s, i) => {
     s.idea = ideaLabel(s);
-    s.role = s.role || (i === 0 ? 'core' : s.kind === 'food' || i === 1 ? 'next' : 'optional');
+    s.role = s.kind === 'home' ? 'next'
+      : s.role || (i === 0 ? 'core' : s.kind === 'food' || i === 1 ? 'next' : 'optional');
+    if (s.role !== 'optional') {
+      if (s.kind !== 'home') s.role = coreIndex === 0 ? 'core' : 'next';
+      coreIndex++;
+    }
     s.specific = plan.planMode === 'specific' || !!s.specific;
     const session = s.sessionStart || (s.timeSensitive ? s.start : '');
     s.timeSensitive = !!(s.verified && /^\d{2}:[0-5]\d$/.test(session)
@@ -443,16 +454,23 @@ function finish(plan, prefs, weather) {
     const shut = shutsAt(s, null);
     s.closingTime = shut == null ? '' : hhmm(shut);
     s.daylightUntil = OUTSIDE.has(s.kind) && weather?.sunset != null ? hhmm(weather.sunset) : '';
+    if (plan.planMode === 'open') {
+      s.venueWhy = s.venueWhy || s.why;
+      s.why = ideaWhy(s, stops[i - 1]);
+    } else if (s.venueWhy) {
+      s.why = s.venueWhy;
+    }
   });
+  if (plan.planMode === 'specific') retell(stops);
 
   plan.title = plan.planMode === 'open' ? home ? 'A night in, done properly'
-    : stops.length ? stops.filter(s => s.role !== 'optional').map(ideaLabel).join(' & ')
+    : coreIndex ? stops.filter(s => s.role !== 'optional').map(ideaTitle).join(' & ')
     : `Time together in ${plan.area}`
     : home ? 'A night in, done properly'
     : anchorStop ? `${anchorStop.name}, and either side of it`
     : `An evening around ${where}`;
   plan.pitch = plan.planMode === 'open'
-    ? `${invitationSummary(plan, prefs)} Keep the venue choices open — about ${prefs.currency} ${Math.round(total)} for two.`
+    ? ideaPitch(plan)
     : named.length >= 2
     ? `${named[0]}, then ${named[1]}${named[2] ? `, then ${named[2]}` : ''}`
       + ` - about ${prefs.currency} ${Math.round(total)} for two.`
@@ -469,7 +487,22 @@ function finish(plan, prefs, weather) {
     plan.warnings.push('No feasible dinner venue came back in map data. Choose and check dinner before committing.');
   }
   if (plan.planMode === 'open') {
-    stops.forEach((s, i) => { s.alts = venueOptions(plan, i, prefs).filter(v => v.name !== s.name).slice(0, ALTS); });
+    stops.forEach((s, i) => {
+      const options = venueOptions(plan, i, prefs);
+      s.alts = options.filter(v => v.name !== s.name).slice(0, ALTS);
+      if (!warrantAnchors || !s.verified || s.role === 'optional' || s.kind === 'food') return;
+      const requestedAquarium = s.slot === 'aquarium'
+        && (prefs.interests || []).some(interest => /aquarium/i.test(interest));
+      const session = sessionAt(s) != null;
+      const onlyActivity = s.role === 'core' && s.kind === 'activity'
+        && options.length === 1 && options[0].name === s.name;
+      if (requestedAquarium || session || onlyActivity) {
+        s.specific = true;
+        s.specificReason = requestedAquarium ? 'You asked for an aquarium.'
+          : session ? 'A listed session time anchors this part of the date.'
+          : 'Only one feasible activity venue came back for this visit window.';
+      }
+    });
   }
   return plan;
 }
@@ -503,6 +536,7 @@ export function swapStop(plan, index, venue, prefs, weather) {
   next.idea = old.idea || ideaLabel(old);
   next.role = old.role;
   next.specific = true;
+  next.specificReason = 'You chose this place.';
   const taken = new Set(stops.filter((_, i) => i !== index).map(s => s.name.toLowerCase()));
   const back = old.verified ? [asVenue(old)] : [];
   next.alts = [...back, ...(old.alts || [])]
@@ -512,9 +546,9 @@ export function swapStop(plan, index, venue, prefs, weather) {
   stops[index] = next;
 
   respectHours(stops, weather?.sunset ?? null);
-  legs(stops, prefs.transport);
+  legs(stops, prefs.transport, plan.planMode !== 'open');
   const stage = STAGES[prefs.stage] || STAGES.getting_to_know;
-  fitWindow(stops, Math.min(stage.maxHours, prefs.hours || stage.maxHours), prefs.transport, stops[0]?.name);
+  fitWindow(stops, Math.min(stage.maxHours, prefs.hours || stage.maxHours), prefs.transport, stops[0]?.name, plan.planMode !== 'open');
   closeOnTime(stops, weather?.sunset ?? null);
   retell(stops);
   return finish(plan, prefs, weather);
@@ -531,9 +565,21 @@ function reasonableHop(a, b, transport) {
   return !hop || hop.minutes <= (HOP_LIMIT[transport] || HOP_LIMIT.walking);
 }
 
-function visitFeasible(s, prefs, weather) {
+function arrivalPossible(s, previous, prefs) {
+  let session = sessionAt(s);
+  if (session == null) return true;
+  const earliest = previous
+    ? (mins(previous.start) ?? 0) + previous.minutes + previous.travelMinutes
+    : mins(prefs.startTime) ?? mins(s.start) ?? session;
+  if (session < 12 * 60 && earliest >= 18 * 60) session += 1440;
+  return session >= earliest && mins(s.start) === sessionAt(s);
+}
+
+function visitFeasible(s, prefs, weather, previous = null) {
   if (s.kind === 'home') return true;
-  if (!s.verified || !reachable(s, prefs, s.kind === 'outdoors')) return false;
+  if (!s.verified || !reachable(s, prefs)) return false;
+  if (previous && !reasonableHop(previous, s, prefs.transport)) return false;
+  if (!arrivalPossible(s, previous, prefs)) return false;
   const start = mins(s.start);
   if (start == null || !isOpenFor(s.openingHours, start, start + s.minutes, weekday)) return false;
   return !OUTSIDE.has(s.kind) || weather?.sunset == null || start + s.minutes <= weather.sunset;
@@ -553,11 +599,12 @@ export function venueOptions(plan, index, prefs = {}) {
     if ((stops[index - 1] && !reasonableHop(stops[index - 1], v, prefs.transport))
         || (stops[index + 1] && !reasonableHop(v, stops[index + 1], prefs.transport))) return false;
     const trial = stops.map((s, i) => i === index
-      ? { ...s, ...v, venueKind: v.kind, kind: s.kind } : { ...s });
-    legs(trial, prefs.transport);
+      ? { ...s, ...v, venueKind: v.kind, kind: s.kind, sessionStart: v.sessionStart || '' } : { ...s });
+    legs(trial, prefs.transport, false);
     // Substituting one venue must not push another beyond its hours or sunset.
-    return trial.every(s => {
+    return trial.every((s, i) => {
       const start = mins(s.start);
+      if (!arrivalPossible(s, trial[i - 1], prefs)) return false;
       if (start == null || !isOpenFor(s.openingHours, start, start + s.minutes, day)) return false;
       return !s.daylightUntil || start + s.minutes <= mins(s.daylightUntil);
     });
@@ -568,20 +615,26 @@ function pruneInfeasible(stops, prefs, weather) {
   const notes = [];
   for (let i = 0; i < stops.length;) {
     const s = stops[i];
-    if (visitFeasible(s, prefs, weather)) { i++; continue; }
+    if (visitFeasible(s, prefs, weather, stops[i - 1])) { i++; continue; }
     const alternative = venueOptions({ stops }, i, prefs)[0];
     if (alternative) {
       const next = realStop(s.slot, alternative, prefs, mins(s.start), s.minutes, s.cost, i === stops.length - 1);
       next.role = s.role;
       next.alts = s.alts || [];
       stops[i] = next;
-      legs(stops, prefs.transport);
-      if (visitFeasible(next, prefs, weather)) { i++; continue; }
+      legs(stops, prefs.transport, false);
+      if (visitFeasible(next, prefs, weather, stops[i - 1])) { i++; continue; }
     }
     notes.push(`${ideaLabel(s)} could not fit the visit window with a feasible venue; it is not included.`);
     if (i === 0 && stops[1]) stops[1].start = s.start;
     stops.splice(i, 1);
-    legs(stops, prefs.transport);
+    legs(stops, prefs.transport, false);
+  }
+  if (stops.filter(s => s.role !== 'optional').length < 2) {
+    for (let i = stops.length - 1; i >= 0; i--) {
+      if (stops[i].role === 'optional') stops.splice(i, 1);
+    }
+    legs(stops, prefs.transport, false);
   }
   retell(stops);
   return notes;
@@ -593,13 +646,15 @@ export function setPlanMode(plan, mode, prefs, weather) {
   plan.planMode = mode === 'specific' ? 'specific' : 'open';
   const stops = plan.stops || (plan.stops = []);
   stops.forEach((s, i) => {
-    s.role = s.role || (i === 0 ? 'core' : s.kind === 'food' || i === 1 ? 'next' : 'optional');
+    s.role = s.kind === 'home' ? 'next'
+      : s.role || (i === 0 ? 'core' : s.kind === 'food' || i === 1 ? 'next' : 'optional');
     s.specific = plan.planMode === 'specific';
+    if (!s.specific) delete s.specificReason;
   });
   const stage = STAGES[prefs.stage] || STAGES.getting_to_know;
   respectHours(stops, weather?.sunset ?? null);
-  legs(stops, prefs.transport);
-  fitWindow(stops, Math.min(stage.maxHours, prefs.hours || stage.maxHours), prefs.transport, stops[0]?.name);
+  legs(stops, prefs.transport, plan.planMode !== 'open');
+  fitWindow(stops, Math.min(stage.maxHours, prefs.hours || stage.maxHours), prefs.transport, stops[0]?.name, plan.planMode !== 'open');
   closeOnTime(stops, weather?.sunset ?? null);
   retell(stops);
   if (plan.planMode === 'open') {
@@ -670,7 +725,8 @@ export function withLocals(hits, slot, locals, prefs) {
     .filter(p => p.kind === want && p.lat != null && !have.has(p.name.toLowerCase())
       && prefs.lat != null && distanceKm(p.lat, p.lon, prefs.lat, prefs.lon) <= reach)
     .map(p => ({ name: p.name, lat: p.lat, lon: p.lon, kind: LOCAL_KIND[slot] || 'Local pick',
-                 cuisine: '', openingHours: '', website: '', address: '' }));
+                 cuisine: '', openingHours: '', website: '', address: '',
+                 sessionStart: p.sessionStart || '' }));
   return [...hits, ...extra];
 }
 
@@ -793,7 +849,13 @@ function shutsAt(s, sunset) {
 function reflow(stops) {
   if (!stops.length) return;
   let t = mins(stops[0].start) ?? 17 * 60;
-  for (const s of stops) { s.start = hhmm(t); t += s.minutes + s.travelMinutes; }
+  for (const s of stops) {
+    let session = sessionAt(s);
+    if (session != null && session < 12 * 60 && t >= 18 * 60) session += 1440;
+    const start = session ?? t;
+    s.start = hhmm(start);
+    t = start + s.minutes + s.travelMinutes;
+  }
 }
 
 /** How long it takes to get from one stop to the next, and how to say it.
@@ -815,9 +877,10 @@ export function leg(a, b, transport = 'walking') {
 /** Real travel between the stops, in the order the evening ended up in.
  *  Every hop used to be "A few minutes on foot" and twelve minutes, which a
  *  Lisbon transit plan with its stops 2 and 5 km apart made plainly untrue. */
-export function legs(stops, transport) {
+export function legs(stops, transport, allowOutdoorDrive = true) {
   if (!stops.length) return;
   stops.forEach((s, i) => {
+    s.drive = false;
     const next = stops[i + 1];
     if (!next) { s.travelNext = ''; s.travelMinutes = 0; return; }
     if (next.kind === 'home') { s.travelNext = 'Then home with it.'; s.travelMinutes = 15; return; }
@@ -825,8 +888,7 @@ export function legs(stops, transport) {
     // rarely a walk from the restaurants - rather than hiking an hour to it.
     const toOutside = OUTSIDE.has(s.kind) || OUTSIDE.has(next.kind);
     let hop = leg(s, next, transport);
-    s.drive = false;
-    if (hop && toOutside && transport === 'walking' && hop.minutes > HOP_LIMIT.walking) {
+    if (allowOutdoorDrive && hop && toOutside && transport === 'walking' && hop.minutes > HOP_LIMIT.walking) {
       hop = leg(s, next, 'car');
       s.drive = true;
     }
@@ -847,6 +909,7 @@ export function legs(stops, transport) {
  *  bar was trimmed from the evening and dinner kept the cut. */
 export function closeOnTime(stops, sunset = null) {
   for (const s of stops) {
+    if (sessionAt(s) != null) continue;
     const shut = shutsAt(s, sunset), start = mins(s.start);
     if (shut == null || start == null) continue;
     const room = shut - start;
@@ -863,7 +926,7 @@ const SLACK = 15;
  *  longest stops that are not dinner first, never below 30 minutes each.
  *  Changes nothing and returns false if it cannot be done. */
 function shave(stops, over) {
-  const order = [...stops].sort((a, b) =>
+  const order = stops.filter(s => sessionAt(s) == null).sort((a, b) =>
     ((a.kind === 'food') - (b.kind === 'food')) || (b.minutes - a.minutes));
   if (order.reduce((n, s) => n + Math.max(0, s.minutes - 30), 0) < over) return false;
   for (const s of order) {
@@ -881,7 +944,7 @@ function shave(stops, over) {
  *  it is the optional one by construction, and cutting the closer always beats
  *  rushing dinner. `keep` names the anchor, which goes only when nothing
  *  else can. */
-export function fitWindow(stops, maxHours, transport, keep = null) {
+export function fitWindow(stops, maxHours, transport, keep = null, allowOutdoorDrive = true) {
   const span = () => {
     const a = mins(stops[0].start) ?? 0, z = stops[stops.length - 1];
     return (mins(z.start) ?? 0) + z.minutes - a;
@@ -915,10 +978,10 @@ export function fitWindow(stops, maxHours, transport, keep = null) {
     last.travelMinutes = 0;
     // The stops either side of the cut are now neighbours, and the walk
     // between them is not the walk either of them had before.
-    if (transport) legs(stops, transport);
+    if (transport) legs(stops, transport, allowOutdoorDrive);
     else reflow(stops);
   }
-  for (const s of [...stops].sort((a, b) => b.minutes - a.minutes).slice(0, 2)) {
+  for (const s of stops.filter(s => sessionAt(s) == null).sort((a, b) => b.minutes - a.minutes).slice(0, 2)) {
     const over = span() - limit;
     if (over <= 0) break;
     s.minutes = Math.max(30, s.minutes - over);
@@ -968,6 +1031,9 @@ export function check(plan, prefs, weather) {
   for (let i = 0; i < stops.length; i++) {
     const s = stops[i], start = mins(s.start);
     if (start == null) { out.push(`'${s.name}' has an unreadable start time.`); continue; }
+    if (!arrivalPossible(s, stops[i - 1], prefs)) {
+      out.push(`'${s.name}' has a session at ${s.sessionStart}, before you can arrive. Pick a later session.`);
+    }
     if (prevEnd != null && start < prevEnd) {
       out.push(`'${s.name}' starts at ${s.start}, before the previous stop finishes.`);
     }

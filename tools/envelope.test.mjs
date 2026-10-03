@@ -162,10 +162,12 @@ await ok('loose envelopes keep meaningful times but leave prices behind', async 
   Object.assign(timed.plan.stops[0], {
     timeSensitive: true, sessionStart: '18:35', closingTime: '20:00',
   });
+  timed.plan.stops[0].alts[0].sessionStart = '18:45';
   const opened = (await unseal(await seal(timed))).data.plan;
   assert.ok(!opened.pitch.includes('USD'));
   assert.equal(opened.stops[0].sessionStart, '18:35');
   assert.equal(opened.stops[0].closingTime, '20:00');
+  assert.equal(opened.stops[0].alts[0].sessionStart, '18:45');
   assert.ok(ideaTime(opened.stops[0], 0).includes('18:35'));
 });
 await ok('old version-one envelope links still decode without new fields', async () => {
@@ -206,7 +208,7 @@ await ok('time-sensitive ideas retain their meaningful time', () => {
   Object.assign(timed.plan.stops[0], { timeSensitive: true, start: '18:35', closingTime: '20:00' });
   const text = asText(timed.plan, prefs);
   assert.ok(text.includes('18:35'));
-  assert.ok(text.includes('Closes at 20:00'));
+  assert.ok(text.includes('A researched option closes at 20:00'));
 });
 
 globalThis.innerWidth = 390;
@@ -234,5 +236,17 @@ await ok('old saved plans render their exact places and times', () => {
   const html = planHtml(old);
   assert.ok(html.includes(old.plan.stops[0].start));
   assert.ok(html.includes(old.plan.stops[0].name.replace(/&/g, '&amp;')));
+});
+await ok('an old envelope renders without new fields, prices, or exact-place controls', async () => {
+  const token = '1.r.' + Buffer.from(JSON.stringify({
+    v: 1, p: { title: 'Our evening' },
+    st: [{ name: 'Old Café', kind: 'coffee', start: '17:00', minutes: 40 }],
+    pf: { location: 'Boston' },
+  })).toString('base64url');
+  const html = planHtml((await unseal(token)).data);
+  assert.ok(html.includes('Old Café'));
+  assert.ok(html.includes('17:00'));
+  assert.ok(!html.includes('undefined'));
+  assert.ok(!html.includes('data-venue-option'));
 });
 console.log(`\n${pass} passed`);
