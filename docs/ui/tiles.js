@@ -40,9 +40,9 @@ const CREDIT = `<div class="credit">&copy; <a href="https://www.openstreetmap.or
 /** The whole evening on one map, a numbered pin per stop. `clear` keeps
  *  the pins out of a band at the top or bottom - where the title sits when
  *  the map is a hero. */
-export function routeMap(stops, W, H, { clearTop = 0, clearBottom = 0 } = {}) {
+export function routeMap(stops, W, H, { clearTop = 0, clearBottom = 0, options = false } = {}) {
   const pts = stops.map((s, i) => ({s, i})).filter(o => o.s.lat != null && o.s.lon != null);
-  if (pts.length < 2) return '';
+  if (pts.length < (options ? 1 : 2)) return '';
   const PAD = 44;
   const room = H - clearTop - clearBottom;           // where the pins may go
   let z = 17;
@@ -57,11 +57,11 @@ export function routeMap(stops, W, H, { clearTop = 0, clearBottom = 0 } = {}) {
 
   // A faint line joining the pins in order: the route, not a scatter.
   const path = pts.map(o => `${(projX(o.s.lon, z) - left).toFixed(1)},${(projY(o.s.lat, z) - top).toFixed(1)}`).join(' ');
-  const line = `<svg class="route-line" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" aria-hidden="true">`
+  const line = options ? '' : `<svg class="route-line" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" aria-hidden="true">`
              + `<polyline points="${path}"/></svg>`;
   const pins = pts.map(o =>
     `<div class="mpin" title="${esc(o.s.name)}" style="left:${projX(o.s.lon, z) - left}px;`
-    + `top:${projY(o.s.lat, z) - top}px">${o.i + 1}</div>`).join('');
+    + `top:${projY(o.s.lat, z) - top}px">${options ? '·' : o.i + 1}</div>`).join('');
   return `<div class="map" style="height:${H}px"><div class="tiles">${lay(left, top, W, H, z)}</div>`
        + `${line}${pins}${CREDIT}</div>`;
 }

@@ -58,6 +58,7 @@ export const SLOT_WORDS = {
   music: ['jazz', 'nightclub'],
   show: ['theatre', 'cinema'],
   activity: ['museum', 'gallery'],
+  pottery: ['pottery', 'ceramics'],
   aquarium: ['aquarium', 'zoo'],
   viewpoint: ['viewpoint', 'park'],
   shopping: ['marketplace', 'bookshop'],
@@ -155,6 +156,7 @@ export function closesAt(hours, weekday = null) {
       const m = part.trim().match(RULE_RE);
       if (m && covers(m[1], weekday)) rule = m[2];
     }
+
     if (rule == null || /\b(off|closed)\b/i.test(rule)) return 0;
     text = rule;
   }
@@ -168,6 +170,32 @@ export function closesAt(hours, weekday = null) {
 const DAYS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
 const DAY_RE = /\b(Mo|Tu|We|Th|Fr|Sa|Su)\b/;
 const RULE_RE = /^((?:(?:Mo|Tu|We|Th|Fr|Sa|Su)(?:-(?:Mo|Tu|We|Th|Fr|Sa|Su))?\s*,?\s*)+)\s+(.+)$/;
+
+/** Common OSM intervals, including split shifts and overnight visits.
+ * Unknown hours remain unknown, not a claim that a kitchen is shut. */
+export function isOpenFor(hours, start, end, weekday = null) {
+  if (!hours) return true;
+  let text = String(hours);
+  if (weekday != null && DAY_RE.test(text)) {
+    let rule = null;
+    for (const part of text.split(';')) {
+      const m = part.trim().match(RULE_RE);
+      if (m && covers(m[1], weekday)) rule = m[2];
+    }
+    if (rule == null) return false;
+    text = rule;
+  }
+  if (/\b(off|closed)\b/i.test(text)) return false;
+  if (text.trim() === '24/7') return true;
+  const ranges = [...text.matchAll(/(\d{1,2}):([0-5]\d)\s*-\s*(\d{1,2}):([0-5]\d)/g)];
+  if (!ranges.length) return true;
+  return ranges.some(([, ah, am, zh, zm]) => {
+    const a = +ah * 60 + +am;
+    let z = +zh * 60 + +zm;
+    if (z <= a) z += 1440;
+    return [0, 1440].some(offset => start + offset >= a && end + offset <= z);
+  });
+}
 
 /** Does "Mo-Fr", "Sa,Su" or "Fr-Mo" include this day? */
 function covers(spec, weekday) {

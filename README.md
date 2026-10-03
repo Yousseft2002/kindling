@@ -1,15 +1,27 @@
 # Kindling
 
-Seven questions, one evening.
+One date idea, enough room to make it yours.
 
 ```
-drinks at JJ Foley's  →  New England Aquarium  →  dinner at Kaze
+clay painting + dinner in Boston · drinks if you're still feeling it
 ```
 
-Not a list of recommendations — a route, with start times, a cost per stop,
-what to book, what to wear, and a named indoor fallback for anything outdoors.
-Every stop is a real place near you, with its address, its opening hours, its
-website, and a pin on a map.
+Not a generic list of recommendations, and not a reservation-by-reservation
+itinerary. Kindling chooses the **shape of the date**: what to do and where to
+spend the night. Start with the main idea, keep dinner flexible, and see where
+it goes. Nearby places are possibilities, not instructions.
+
+The research stays underneath: local discovery, opening hours, weather, sunset,
+travel distance, interests, relationship stage, budget, dietary needs and local
+signals still shape the recommendation. Closed activities are replaced rather
+than suggested just because they sound good. Unknown hours are not a promise:
+check sessions, availability and dietary options before heading out.
+
+Results lead with **The move**, a broad area, a rough budget and genuinely
+optional extensions. Area maps show nearby options without implying a route.
+Specific places remain useful for distinctive or scarce activities; **Pick the
+places for us** adds specificity without another onboarding flow. You can also
+make the night more spontaneous again. Old saved plans still open as before.
 
 **No API key. No account. No server.** The app in `docs/` is the whole product
 and it runs entirely in your browser, on free public data.
@@ -37,7 +49,7 @@ to build, nothing to deploy — pushing is deploying.
 | **OpenStreetMap** (Nominatim) | venues, categories, addresses, opening hours | none |
 | **Open-Meteo** | geocoding, forecast, sunset | none |
 | **Wikipedia** | a photograph and a line of context | none |
-| **OpenStreetMap tiles** | the route map | none |
+| **OpenStreetMap tiles** | area/options maps, or a route for specific plans | none |
 
 All four answer cross-origin browser calls, which is the only reason this can
 be a static site at all — that was checked from a third-party origin before
@@ -57,14 +69,14 @@ Asking seven questions and ignoring the answers is theatre, so:
 | Input | What it changes |
 |---|---|
 | **location** | Resolved to coordinates. Everything is searched within a radius of *that point* — a plan anchored on a point is local, one anchored on the string "London" is a guess about which part. |
-| **relationship stage** | The biggest lever: how many stops, how long the evening runs, and whether the last one is optional. |
+| **relationship stage** | Early dates stay short and low-pressure; established couples can add an optional extension. Creativity need not mean expense or complexity. |
 | **interests** | Picks the anchor stop. "aquarium" builds the evening around an aquarium, "jazz" around live music, "art" around a gallery. |
 | **budget** | A hard cap, split across stops, then re-checked against the arithmetic. |
 | **weather** | Fetched for those coordinates, or typed. Rain keeps the evening indoors instead of marching you up a hill. |
 | **transportation** | Sets the search radius and the longest acceptable hop between stops. |
 | **clothing style** | Flags a venue whose door policy is stricter than what you are wearing. A plan that gets you turned away is a failed plan. |
 
-Plus what a time-ordered itinerary cannot do without: the date, the start time,
+Plus what realistic local research needs: the date, the start time,
 roughly how long, and a free-text note for dietary limits or anything to avoid.
 
 ### Location, specifically
@@ -164,8 +176,9 @@ version constant by hand is not a mechanism.
 settle the evening beforehand and then put the phone away, which only works
 if the evening is somewhere you will actually see it. So `lib/outing.js`
 turns a plan into three things that outlive the tab: an `.ics` the calendar
-will nag you about, a plain-text itinerary to paste into a message, and one
-Google Maps link that routes the whole night in order. All pure functions of
+can hold the evening in, a plain-text date idea to paste into a message, and a
+Google Maps area link (or a route for a specific plan). Loose dates export one
+calendar hold, not a string of appointments. All pure functions of
 the plan, so they work offline and on a plan restored from storage.
 
 Two details that are not arbitrary. Calendar times are **floating local**
@@ -282,6 +295,13 @@ share sheet, or is copied. Their side is the same envelope, sealed; touching the
 seal lifts the flap and the letter, and "See the evening" opens the plan with
 your line on top (`envelope.js` in `ui/` and `lib/`).
 
+The closed envelope is one human sentence: **“You, Me, Clay Painting & dinner
+in Boston.”** `invitationSummary()` generates it deterministically from the
+ideas and broad area, with no model call. No schedules, costs, addresses or
+logistics appear on the closed envelope. You can send it before choosing a
+restaurant; the optional personal note belongs inside. Existing version-one
+envelope links remain readable.
+
 - **No server.** The plan is packed (deflate, base64url) into the URL fragment,
   `#e=…`, which browsers never send to any server. A three-stop evening is
   about 1.5 KB of link. Nothing is stored.
@@ -296,8 +316,8 @@ your line on top (`envelope.js` in `ui/` and `lib/`).
   receiver's own saved plan is never overwritten, and the fragment is cleared
   when they plan one of their own.
 
-**Tune the night** sits under the timeline: budget, start time, length and
-dietary needs, then *Re-plan*. Dietary needs are real filters: `places.js`
+**Tune the night** adds or relaxes venue choices, alongside budget, start time,
+length and dietary needs, then *Re-plan*. Dietary tags are evidence: `places.js`
 reads OpenStreetMap's `diet:*` tags, dinner prefers a kitchen tagged for all
 of them, and one the map cannot vouch for gets a "call ahead" warning rather
 than a promise — most restaurants carry no diet tags at all.
@@ -315,19 +335,20 @@ docs/                 the app — this is what GitHub Pages serves
   index.html          shell, styles, the deck
   app.js              screens, transitions, planning, wiring the results
   ui/spring.js        spring physics in Web Animations keyframes, plus settled()
-  ui/tiles.js         route map, single-place map visuals, tile reveal
+  ui/tiles.js         area/options and route maps, single-place visuals, tile reveal
   ui/invitation.js    the loading sequence
   ui/results.js       the plan page and the tune panel
   ui/hero.js          a stop opened into a full-screen detail view
   ui/swap.js          the 3D alternatives deck
   ui/envelope.js      the sealed envelope: sealing one, breaking one open
   lib/fmt.js          the one esc(), imported everywhere
-  lib/outing.js       the evening as a calendar file, a message, a route
+  lib/outing.js       calendar hold/events, a message, area or route links
   lib/net.js          fetch, session cache, the Nominatim rate gate
   lib/places.js       geocoding, category search, venue lookup, noise filter
   lib/weather.js      forecast, golden hour, typed overrides
   lib/wiki.js         photograph and blurb, with the coordinate guard
   lib/plan.js         slots, composition, the rules
+  lib/ideas.js        deterministic idea labels, soft timing and invitation copy
   lib/links.js        booking and map links
   lib/envelope.js     a plan packed into a link and back, with the untrusted-input rules
   lib/community.js    the community: sign-in, evenings, what the planner learns
@@ -337,17 +358,19 @@ docs/                 the app — this is what GitHub Pages serves
   sw.js               offline shell
 supabase/schema.sql   the community's tables and every rule protecting them
 tools/mock-fetch.js   offline stand-in for every public API, for tests and screenshots
-tools/plan.test.mjs   Node tests for alternatives, swapping and diets (node tools/plan.test.mjs)
-tools/envelope.test.mjs  Node tests for the sealed envelope (node tools/envelope.test.mjs)
+tools/plan.test.mjs   offline Node tests for date shapes, feasibility, alternatives and diets
+tools/envelope.test.mjs  offline Node tests for invitations, compatibility, exports and results
 ```
 
 ---
 
 # The Python version
 
-`dateplanner/` and `run.py` are the original build, and they do everything
-`docs/` does **plus** the part that cannot ship to Pages: Claude writes the
-itinerary. A web-search scouting pass for what is actually on that night, a
+`dateplanner/` and `run.py` are the original, venue-specific reference build.
+The flexible date-shape experience described above is the GitHub Pages product
+in `docs/`; the Python interface still outputs a specific itinerary. It also
+contains the part that cannot ship to Pages: an AI planning path. A web-search
+scouting pass for what is actually on that night, a
 planning call, then a repair pass. That needs an API key, and a key in a public
 page is a key anyone can spend, so it needs a server.
 
@@ -356,6 +379,8 @@ pip install -r requirements.txt
 python run.py --serve                            # the AI version, locally
 python run.py -l "Brooklyn" -b 90 --dry-run      # a real plan, zero API cost
 python test_planner.py                           # 484 offline tests, no key, no spend
+node tools/plan.test.mjs                         # browser planner, offline
+node tools/envelope.test.mjs                     # invitations, exports and results, offline
 ```
 
 Two implementations of the same rules is a real cost, and worth saying out

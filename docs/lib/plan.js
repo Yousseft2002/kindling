@@ -7,7 +7,8 @@
  * up, the clock is continuous, or the aquarium has shut.
  */
 
-import { nearby, lookup, closesAt, isChain } from './places.js';
+import { nearby, lookup, closesAt, isOpenFor, isChain } from './places.js';
+import { ideaLabel, invitationSummary } from './ideas.js';
 import { look as wikiLook } from './wiki.js';
 import * as wx from './weather.js';
 import { distanceKm } from './net.js';
@@ -91,7 +92,7 @@ export const ADVENTURE = {
  * everything else is there to make dinner better. */
 const SHAPE = {
   drinks: [50, 0.16], coffee: [40, 0.08], aquarium: [75, 0.22],
-  activity: [70, 0.18], show: [110, 0.30], music: [70, 0.20],
+  activity: [70, 0.18], pottery: [70, 0.18], show: [110, 0.30], music: [70, 0.20],
   viewpoint: [40, 0.00], shopping: [35, 0.05], food: [95, 0.50],
   treat: [30, 0.10], sweet: [25, 0.06], takeout: [30, 0.35], home: [150, 0.00],
   sled: [75, 0.00], hill: [60, 0.00], nature: [70, 0.00], rink: [60, 0.12],
@@ -103,7 +104,7 @@ const SHAPE = {
 const AS_KIND = {
   aquarium: 'activity', coffee: 'coffee', drinks: 'drinks', activity: 'activity',
   music: 'music', show: 'show', viewpoint: 'viewpoint', shopping: 'shopping',
-  food: 'food', treat: 'shopping', sweet: 'shopping', takeout: 'food', home: 'home', rink: 'activity',
+  food: 'food', pottery: 'activity', treat: 'shopping', sweet: 'shopping', takeout: 'food', home: 'home', rink: 'activity',
   sled: 'outdoors', hill: 'outdoors', nature: 'outdoors', plunge: 'outdoors', swim: 'outdoors',
 };
 const OUTSIDE = new Set(['viewpoint', 'outdoors']);
@@ -223,10 +224,11 @@ export function slotsFor(prefs, weather) {
     || (winter && weather?.highC != null && weather.highC <= 2);
   const warm = weather?.highC != null ? weather.highC >= 22 : [6, 7, 8].includes(month);
   const stormy = /thunder/i.test(weather?.summary || '');
+  const earlyStage = ['first_date', 'getting_to_know'].includes(prefs.stage);
 
   // A night in: something good from a local shop, dinner picked up on the
   // way, then home.
-  if (level === 1) return ['treat', 'takeout', 'home'];
+  if (level === 1) return earlyStage ? ['takeout', 'home'] : ['treat', 'takeout', 'home'];
 
   // Outside first, in daylight - build() moves the start earlier to fit -
   // then somewhere local to warm up, then dinner. Concord in January:
@@ -235,9 +237,12 @@ export function slotsFor(prefs, weather) {
     let out = snowy ? 'sled' : wants('hike', 'walk', 'nature', 'woods', 'forest') ? 'nature' : 'hill';
     if (wants('skat', 'ice')) out = 'rink';
     else if (wx.isWet(weather) && !snowy) out = winter ? 'rink' : 'activity';
-    return [out, 'treat', 'food'];
+    return earlyStage ? [out, 'food'] : [out, 'treat', 'food'];
   }
-  if (level === 5 && !stormy) return warm ? ['swim', 'sweet', 'food'] : ['plunge', 'coffee', 'food'];
+  if (level === 5 && !stormy) {
+    return earlyStage ? [warm ? 'swim' : 'plunge', 'food']
+      : warm ? ['swim', 'sweet', 'food'] : ['plunge', 'coffee', 'food'];
+  }
 
   let anchor;
   if (wants('aquarium', 'fish', 'animal', 'zoo')) anchor = 'aquarium';
@@ -246,6 +251,7 @@ export function slotsFor(prefs, weather) {
   else if (wants('hike', 'hiking', 'nature', 'woods') && !wx.isWet(weather)) anchor = 'nature';
   else if (wants('music', 'jazz', 'gig', 'band', 'live')) anchor = 'music';
   else if (wants('film', 'cinema', 'movie', 'theatre', 'theater', 'comedy')) anchor = 'show';
+  else if (wants('pottery', 'clay', 'ceramic')) anchor = 'pottery';
   else if (wants('art', 'museum', 'history', 'gallery', 'exhibition')) anchor = 'activity';
   else if (wants('book', 'vintage', 'record', 'market', 'shopping')) anchor = 'shopping';
   else if (wx.isWet(weather) || wx.isCold(weather)) anchor = 'activity';
@@ -256,7 +262,7 @@ export function slotsFor(prefs, weather) {
   // Curious: open somewhere you would not have found on your own.
   if (level === 3 || wants('cheese', 'chocolate', 'bakery', 'dessert')) opener = 'treat';
 
-  const slots = [opener, anchor, 'food'];
+  const slots = [level === 3 ? opener : anchor, 'food'];
   // A closer, for the stages where the night can run on. It is a nightcap,
   // not a second helping of the anchor: someone who asked for jazz was
   // getting two music stops, which in a city with one tagged jazz bar meant
@@ -300,6 +306,7 @@ export async function build(prefs, weather, onPhase = () => {}, locals = null) {
 
   onPhase('Looking for places near you');
   const stops = [];
+  const lookupNotes = [];
   const used = new Set();
   const opening = t;
   let from = prefs.lat != null ? { lat: prefs.lat, lon: prefs.lon } : null;
@@ -308,27 +315,59 @@ export async function build(prefs, weather, onPhase = () => {}, locals = null) {
 
   for (let i = 0; i < slots.length; i++) {
     const slot = slots[i];
-    const [minutes, share] = SHAPE[slot] || [60, 0.2];
-    const cost = Math.round(Math.min(left, prefs.budget * share) * 100) / 100;
+    let [minutes, share] = SHAPE[slot] || [60, 0.2];
+    let cost = Math.round(Math.min(left, prefs.budget * share) * 100) / 100;
     const last = i === slots.length - 1;
 
     // Anything but dinner may be moved to the front by respectHours, so it
     // only has to be open for half an hour after the evening starts. Dinner
     // always ends the night, so it has to stay open to the end of it.
-    const needUntil = slot === 'food' ? t + minutes : opening + 30;
+    const optional = i > 1 && slots[1] === 'food' && slot !== 'food';
+    const needUntil = slot === 'food' || optional ? t + minutes : opening + 30;
     let venue = null, ranked = [];
     if (slot !== 'home') {
       const hits = await nearby(slot, prefs.lat, prefs.lon, prefs.transport, 6);
-      ranked = rank(withLocals(hits, slot, locals, prefs), used,
+      const outdoor = AS_KIND[slot] === 'outdoors';
+      ranked = rank(withLocals(hits, slot, locals, prefs).filter(v => reachable(v, prefs, outdoor)
+                      && (!from || reasonableHop(from, v, prefs.transport)
+                        || ((outdoor || OUTSIDE.has(stops.at(-1)?.kind)) && prefs.transport === 'walking'
+                          && reasonableHop(from, v, 'car')))
+                      && isOpenFor(v.openingHours, slot === 'food' || optional ? t : opening, needUntil, weekday)), used,
                     { from, needUntil, known, localOnly: prefs.localOnly,
                       diet: FED.has(slot) ? (prefs.diet || []) : [] });
       venue = ranked[0] || null;
       if (venue) from = venue;
     }
 
+    // An open idea needs real evidence, not a closed museum dressed as a concept.
+    let chosenSlot = slot;
+    if (!venue && slot !== 'home' && prefs.planMode !== 'specific'
+        && !FED.has(slot) && !optional) {
+      for (const fallback of ['coffee', 'drinks', 'shopping'].filter(s => s !== slot)) {
+        const hits = await nearby(fallback, prefs.lat, prefs.lon, prefs.transport, 6);
+        const fallbackMinutes = SHAPE[fallback][0];
+        ranked = rank(withLocals(hits, fallback, locals, prefs)
+          .filter(v => reachable(v, prefs) && (!from || reasonableHop(from, v, prefs.transport))
+            && isOpenFor(v.openingHours, t, t + fallbackMinutes, weekday)), used,
+          { from, needUntil: t + fallbackMinutes, known, localOnly: prefs.localOnly });
+        venue = ranked[0] || null;
+        if (venue) {
+          chosenSlot = fallback;
+          [minutes, share] = SHAPE[fallback];
+          cost = Math.round(Math.min(left, prefs.budget * share) * 100) / 100;
+          from = venue;
+          break;
+        }
+      }
+    }
+    if (!venue && slot !== 'home' && prefs.planMode !== 'specific') {
+      if (i === 0) lookupNotes.push('No feasible opening idea came back in map data. Choose and check one before committing.');
+      continue;
+    }
     const stop = slot === 'home' ? homeStop(prefs, t, minutes)
-      : venue ? realStop(slot, venue, prefs, t, minutes, cost, last)
+      : venue ? realStop(chosenSlot, venue, prefs, t, minutes, cost, last)
       : placeholder(slot, prefs, t, minutes, cost, last);
+    stop.role = i === 0 ? 'core' : (i === 1 || slot === 'food') ? 'next' : 'optional';
     // The runners-up, kept so a stop can be swapped without planning again.
     // Plain venue records: the plan is saved to localStorage whole.
     stop.alts = ranked.slice(1, 1 + ALTS);
@@ -343,7 +382,7 @@ export async function build(prefs, weather, onPhase = () => {}, locals = null) {
     stops.push(stop);
     used.add(stop.name.toLowerCase());
     if (venue) onPhase('Looking for places near you', { found: stop.name, kind: stop.venueKind || stop.kind });
-    if (i === 1) keep = stop.name;
+    if (i === 0) keep = stop.name;
     left = Math.max(0, left - cost);
     t += minutes + (last ? 0 : 12);
   }
@@ -355,6 +394,7 @@ export async function build(prefs, weather, onPhase = () => {}, locals = null) {
   fitWindow(stops, Math.min(stage.maxHours, prefs.hours), prefs.transport, keep);
   closeOnTime(stops, sunset);
   retell(stops);
+  const feasibilityNotes = prefs.planMode !== 'specific' ? pruneInfeasible(stops, prefs, weather) : [];
 
   onPhase('Finding a photograph');
   // All at once. Wikipedia is not the rate-gated source - Nominatim is - and
@@ -364,8 +404,11 @@ export async function build(prefs, weather, onPhase = () => {}, locals = null) {
   await Promise.all(stops.map(photograph));
 
   const plan = {
+    planMode: prefs.planMode === 'specific' ? 'specific' : 'open',
+    area: String(prefs.location || '').split(',')[0].trim(),
     adventure: ADVENTURE[Math.min(5, Math.max(1, Math.round(Number(prefs.adventure) || 2)))][0],
     timing,
+    feasibilityNotes: [...lookupNotes, ...feasibilityNotes],
     stops,
     wear: wear(prefs, weather, slots),
     // Real People's Insights: the best-loved evenings locals shared near here,
@@ -388,11 +431,29 @@ function finish(plan, prefs, weather) {
   const anchorStop = stops.find(s => ['activity', 'music', 'show', 'outdoors'].includes(s.kind) && s.verified);
   const where = (prefs.location || '').split(',')[0];
   const home = stops.some(s => s.kind === 'home');
+  plan.planMode = plan.planMode === 'specific' ? 'specific' : 'open';
+  plan.area = plan.area || String(prefs.location || '').split(',')[0].trim();
+  stops.forEach((s, i) => {
+    s.idea = ideaLabel(s);
+    s.role = s.role || (i === 0 ? 'core' : s.kind === 'food' || i === 1 ? 'next' : 'optional');
+    s.specific = plan.planMode === 'specific' || !!s.specific;
+    const session = s.sessionStart || (s.timeSensitive ? s.start : '');
+    s.timeSensitive = !!(s.verified && /^\d{2}:[0-5]\d$/.test(session)
+      && mins(session) < 1440);
+    const shut = shutsAt(s, null);
+    s.closingTime = shut == null ? '' : hhmm(shut);
+    s.daylightUntil = OUTSIDE.has(s.kind) && weather?.sunset != null ? hhmm(weather.sunset) : '';
+  });
 
-  plan.title = home ? 'A night in, done properly'
+  plan.title = plan.planMode === 'open' ? home ? 'A night in, done properly'
+    : stops.length ? stops.filter(s => s.role !== 'optional').map(ideaLabel).join(' & ')
+    : `Time together in ${plan.area}`
+    : home ? 'A night in, done properly'
     : anchorStop ? `${anchorStop.name}, and either side of it`
     : `An evening around ${where}`;
-  plan.pitch = named.length >= 2
+  plan.pitch = plan.planMode === 'open'
+    ? `${invitationSummary(plan, prefs)} Keep the venue choices open — about ${prefs.currency} ${Math.round(total)} for two.`
+    : named.length >= 2
     ? `${named[0]}, then ${named[1]}${named[2] ? `, then ${named[2]}` : ''}`
       + ` - about ${prefs.currency} ${Math.round(total)} for two.`
     : `A night around ${where} for about ${prefs.currency} ${Math.round(total)}, for two.`;
@@ -403,6 +464,13 @@ function finish(plan, prefs, weather) {
               + `move, and everything else here is close enough to swap at short notice.`;
   attachLinks(plan, prefs.location);
   plan.warnings = check(plan, prefs, weather);
+  plan.warnings.push(...(plan.feasibilityNotes || []));
+  if (!stops.some(s => s.kind === 'food')) {
+    plan.warnings.push('No feasible dinner venue came back in map data. Choose and check dinner before committing.');
+  }
+  if (plan.planMode === 'open') {
+    stops.forEach((s, i) => { s.alts = venueOptions(plan, i, prefs).filter(v => v.name !== s.name).slice(0, ALTS); });
+  }
   return plan;
 }
 
@@ -419,17 +487,22 @@ export async function photograph(s) {
  *  evening: same start, same length, same share of the budget. The stop it
  *  replaces becomes an alternative in turn, so a swap can be undone.
  *
- *  The clock does not move. Only the walks either side are re-measured, and
- *  the checks run again - so a swap that lands on a place shut by then says
- *  so, rather than quietly breaking the evening. Returns the plan. */
+ *  Walks are re-measured and the timing rules run again. Open plans accept
+ *  only feasible choices; specific plans keep the checks and warnings.
+ *  Returns the plan. */
 export function swapStop(plan, index, venue, prefs, weather) {
   const stops = plan.stops;
   const old = stops[index];
   if (!old || !venue || !old.slot) return plan;
   weekday = prefs.date ? new Date(prefs.date + 'T12:00').getDay() : null;
+  if (plan.planMode === 'open'
+      && !venueOptions(plan, index, prefs).some(v => v.name === venue.name && v.lat === venue.lat && v.lon === venue.lon)) return plan;
 
   const last = index === stops.length - 1;
   const next = realStop(old.slot, venue, prefs, mins(old.start) ?? 0, old.minutes, old.cost, last);
+  next.idea = old.idea || ideaLabel(old);
+  next.role = old.role;
+  next.specific = true;
   const taken = new Set(stops.filter((_, i) => i !== index).map(s => s.name.toLowerCase()));
   const back = old.verified ? [asVenue(old)] : [];
   next.alts = [...back, ...(old.alts || [])]
@@ -438,8 +511,100 @@ export function swapStop(plan, index, venue, prefs, weather) {
   next.locals = null;
   stops[index] = next;
 
+  respectHours(stops, weather?.sunset ?? null);
   legs(stops, prefs.transport);
+  const stage = STAGES[prefs.stage] || STAGES.getting_to_know;
+  fitWindow(stops, Math.min(stage.maxHours, prefs.hours || stage.maxHours), prefs.transport, stops[0]?.name);
+  closeOnTime(stops, weather?.sunset ?? null);
   retell(stops);
+  return finish(plan, prefs, weather);
+}
+
+function reachable(v, prefs, outdoor = false) {
+  if (!Number.isFinite(v.lat) || !Number.isFinite(v.lon)) return false;
+  return prefs.lat == null || prefs.lon == null
+    || distanceKm(v.lat, v.lon, prefs.lat, prefs.lon) <= Math.max(radiusKm(prefs.transport), outdoor ? 12 : 0);
+}
+
+function reasonableHop(a, b, transport) {
+  const hop = leg(a, b, transport);
+  return !hop || hop.minutes <= (HOP_LIMIT[transport] || HOP_LIMIT.walking);
+}
+
+function visitFeasible(s, prefs, weather) {
+  if (s.kind === 'home') return true;
+  if (!s.verified || !reachable(s, prefs, s.kind === 'outdoors')) return false;
+  const start = mins(s.start);
+  if (start == null || !isOpenFor(s.openingHours, start, start + s.minutes, weekday)) return false;
+  return !OUTSIDE.has(s.kind) || weather?.sunset == null || start + s.minutes <= weather.sunset;
+}
+
+/** Bounded venue records; reflow checks the actual visit, not the old slot time. */
+export function venueOptions(plan, index, prefs = {}) {
+  const stops = plan.stops || [], stop = stops[index];
+  if (!stop) return [];
+  const day = prefs.date ? new Date(prefs.date + 'T12:00').getDay() : null;
+  const used = new Set(stops.filter((_, i) => i !== index).map(s => s.name.toLowerCase()));
+  const seen = new Set();
+  return [...(stop.verified ? [asVenue(stop)] : []), ...(stop.alts || [])].filter(v => {
+    if (!v.name || seen.has(v.name.toLowerCase()) || used.has(v.name.toLowerCase())) return false;
+    seen.add(v.name.toLowerCase());
+    if (!reachable(v, prefs) || (prefs.localOnly && isChain(v.name))) return false;
+    if ((stops[index - 1] && !reasonableHop(stops[index - 1], v, prefs.transport))
+        || (stops[index + 1] && !reasonableHop(v, stops[index + 1], prefs.transport))) return false;
+    const trial = stops.map((s, i) => i === index
+      ? { ...s, ...v, venueKind: v.kind, kind: s.kind } : { ...s });
+    legs(trial, prefs.transport);
+    // Substituting one venue must not push another beyond its hours or sunset.
+    return trial.every(s => {
+      const start = mins(s.start);
+      if (start == null || !isOpenFor(s.openingHours, start, start + s.minutes, day)) return false;
+      return !s.daylightUntil || start + s.minutes <= mins(s.daylightUntil);
+    });
+  }).slice(0, ALTS + 1);
+}
+
+function pruneInfeasible(stops, prefs, weather) {
+  const notes = [];
+  for (let i = 0; i < stops.length;) {
+    const s = stops[i];
+    if (visitFeasible(s, prefs, weather)) { i++; continue; }
+    const alternative = venueOptions({ stops }, i, prefs)[0];
+    if (alternative) {
+      const next = realStop(s.slot, alternative, prefs, mins(s.start), s.minutes, s.cost, i === stops.length - 1);
+      next.role = s.role;
+      next.alts = s.alts || [];
+      stops[i] = next;
+      legs(stops, prefs.transport);
+      if (visitFeasible(next, prefs, weather)) { i++; continue; }
+    }
+    notes.push(`${ideaLabel(s)} could not fit the visit window with a feasible venue; it is not included.`);
+    if (i === 0 && stops[1]) stops[1].start = s.start;
+    stops.splice(i, 1);
+    legs(stops, prefs.transport);
+  }
+  retell(stops);
+  return notes;
+}
+
+/** Offline mode switch, also accepting old, plain saved plans. */
+export function setPlanMode(plan, mode, prefs, weather) {
+  weekday = prefs.date ? new Date(prefs.date + 'T12:00').getDay() : null;
+  plan.planMode = mode === 'specific' ? 'specific' : 'open';
+  const stops = plan.stops || (plan.stops = []);
+  stops.forEach((s, i) => {
+    s.role = s.role || (i === 0 ? 'core' : s.kind === 'food' || i === 1 ? 'next' : 'optional');
+    s.specific = plan.planMode === 'specific';
+  });
+  const stage = STAGES[prefs.stage] || STAGES.getting_to_know;
+  respectHours(stops, weather?.sunset ?? null);
+  legs(stops, prefs.transport);
+  fitWindow(stops, Math.min(stage.maxHours, prefs.hours || stage.maxHours), prefs.transport, stops[0]?.name);
+  closeOnTime(stops, weather?.sunset ?? null);
+  retell(stops);
+  if (plan.planMode === 'open') {
+    plan.feasibilityNotes = pruneInfeasible(stops, prefs, weather);
+  }
   return finish(plan, prefs, weather);
 }
 
@@ -448,7 +613,7 @@ function asVenue(s) {
   return { name: s.name, lat: s.lat, lon: s.lon, kind: s.venueKind, cuisine: s.cuisine || '',
            openingHours: s.openingHours || '', website: s.website || '', address: s.address || '',
            within: '', diet: s.diet || [], photo: s.photo || '', blurb: s.blurb || '',
-           photoCredit: s.photoCredit || '' };
+           photoCredit: s.photoCredit || '', sessionStart: s.sessionStart || '' };
 }
 
 /** The candidate to use. Never one already in the plan, and never one that
@@ -522,6 +687,7 @@ function realStop(slot, v, prefs, t, minutes, cost, last) {
   if (outdoors && v.within && !v.name.includes(v.within)) why = `At ${v.within}. ${why}`;
   return {
     slot, name: v.name, kind, start: hhmm(t), minutes, cost, why,
+    sessionStart: v.sessionStart || '',
     travelNext: last ? '' : 'A few minutes on foot.',
     travelMinutes: last ? 0 : 12,
     booking: slot === 'takeout' ? 'Call ahead to order for pick-up.'
@@ -595,8 +761,10 @@ export function respectHours(stops, sunset = null) {
   if (stops.every(s => shuts(s) === 24 * 60)) return;
 
   // Home is always last, after dinner has been picked up.
-  const end = s => s.kind === 'food' || s.kind === 'home';
-  const tail = [...stops.filter(s => s.kind === 'food'), ...stops.filter(s => s.kind === 'home')];
+  const end = s => s.kind === 'food' || s.kind === 'home' || s.role === 'optional';
+  const tail = [...stops.filter(s => s.kind === 'food'),
+    ...stops.filter(s => s.kind === 'home'),
+    ...stops.filter(s => s.role === 'optional' && !['food', 'home'].includes(s.kind))];
   const head = stops.filter(s => !end(s)).sort((a, b) => shuts(a) - shuts(b));
   const next = [...head, ...tail];
   if (next.map(s => s.name).join('|') === stops.map(s => s.name).join('|')) return;
@@ -623,6 +791,7 @@ function shutsAt(s, sunset) {
 }
 
 function reflow(stops) {
+  if (!stops.length) return;
   let t = mins(stops[0].start) ?? 17 * 60;
   for (const s of stops) { s.start = hhmm(t); t += s.minutes + s.travelMinutes; }
 }

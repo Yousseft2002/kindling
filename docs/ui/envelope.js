@@ -15,8 +15,9 @@
 
 import { springTo } from './spring.js';
 import { seal as packEvening, linkFor } from '../lib/envelope.js';
+import { invitationSummary } from '../lib/ideas.js';
 
-const DEFAULT_SAY = 'An evening has been planned. All you have to do is show up.';
+const DEFAULT_SAY = 'You, me, and a night to see where it goes.';
 const FLAME = '<svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true" focusable="false">'
   + '<path fill="currentColor" d="M12 2c1 3.6 5.2 5.6 5.2 10.2a5.2 5.2 0 0 1-10.4 0c0-2.1 1-3.4 2.1-4.4.2 1.7.9 2.5 1.7 2.8C10.3 8.3 10.8 4.6 12 2z"/></svg>';
 
@@ -107,7 +108,7 @@ export function openSeal({ data }) {
   const $ = s => ev.querySelector(s);
   const env = $('.ev-env'), note = $('#ev_note'), tag = $('#ev_surprise'), say = $('.ev-say');
   const status = msg => { $('#ev_status').textContent = msg; };
-  const paint = () => { say.textContent = note.value.trim() || DEFAULT_SAY; };
+  const paint = () => { say.textContent = invitationSummary(data.plan, data.prefs); };
   paint();
   note.addEventListener('input', paint);
   tag.addEventListener('click', () => tag.setAttribute('aria-pressed', String(tag.getAttribute('aria-pressed') !== 'true')));
@@ -184,12 +185,10 @@ export function openReceived({ note, surprise, data, onOpen }) {
 
   const $ = s => ev.querySelector(s);
   const env = $('.ev-env'), seal = $('.ev-seal'), go = $('#ev_go');
-  const p = data.prefs;
-  const when = p.date ? new Date(p.date + 'T12:00').toLocaleDateString(undefined,
-    { weekday: 'long', day: 'numeric', month: 'long' }) : '';
-  $('.ev-title').textContent = surprise ? 'Something is planned for you.' : data.plan.title;
+  $('.ev-title').textContent = surprise ? 'Something is planned for you.'
+    : invitationSummary(data.plan, data.prefs);
   $('.ev-sub').textContent = surprise ? 'Break the seal to see what.'
-    : [p.location.split(',')[0], when].filter(Boolean).join(' · ');
+    : 'Keep the night open.';
   $('.ev-say').textContent = note || DEFAULT_SAY;
 
   let opened = false;

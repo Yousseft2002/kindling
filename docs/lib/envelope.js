@@ -31,6 +31,13 @@ const date = v => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : '
 // http(s) only, and nothing that could break out of an attribute or a CSS url().
 const url = v => typeof v === 'string' && v.length <= 600 && /^https?:\/\/[^\s"'()<>\\]+$/i.test(v) ? v : '';
 const list = (n, each) => v => Array.isArray(v) ? v.slice(0, n).map(each).filter(Boolean) : [];
+const choice = values => v => values.includes(v) ? v : '';
+
+const VENUE = {
+  name: str(120), lat: coord(90), lon: coord(180), kind: str(60), cuisine: str(80),
+  openingHours: str(200), website: url, address: str(200), diet: list(6, str(24)),
+  photo: url, blurb: str(320), photoCredit: url,
+};
 
 const STOP = {
   slot: str(24), name: str(120), kind: str(24), start: time, minutes: num(0, 1440),
@@ -39,13 +46,20 @@ const STOP = {
   lat: coord(90), lon: coord(180), address: str(200), venueKind: str(60), cuisine: str(80),
   openingHours: str(200), website: url, diet: list(6, str(24)), distanceM: num(0, 1e7),
   photo: url, blurb: str(320), photoCredit: url,
+  idea: str(80), role: choice(['core', 'next', 'optional']), specific: bool, timeSensitive: bool,
+  sessionStart: time, closingTime: time, daylightUntil: time,
+  alts: list(3, v => v?.name ? clean(VENUE, v) : null),
 };
 const PLAN = {
   title: str(140), pitch: str(420), adventure: str(40), timing: str(220), wear: str(320),
   transportNote: str(320), weatherCall: str(320), backup: str(320),
   warnings: list(8, str(320)),
+  planMode: choice(['open', 'specific']), area: str(140),
 };
-const PREFS = { location: str(140), date, lat: coord(90), lon: coord(180), localOnly: bool };
+const PREFS = {
+  location: str(140), date, lat: coord(90), lon: coord(180), localOnly: bool,
+  transport: choice(['walking', 'bike', 'transit', 'car', 'rideshare']),
+};
 
 function clean(schema, raw) {
   const out = {};
@@ -107,7 +121,8 @@ export async function seal(d, { note = '', surprise = false } = {}) {
   // A gift does not come with a receipt. Prices are not in the schemas above;
   // the pitch and the warnings are prose that quotes them, so they are cut here.
   if (p.pitch) p.pitch = p.pitch.replace(/\s+-\s+about\s+\S+\s+[\d.,]+\s+for two\./i, '.')
-                                .replace(/\s+for about\s+\S+\s+[\d.,]+,\s+for two\./i, '.');
+                                .replace(/\s+for about\s+\S+\s+[\d.,]+,\s+for two\./i, '.')
+                                .replace(/\s*[—-]\s*about\s+\S+\s+[\d.,]+\s+for two\./i, '.');
   if (p.warnings) p.warnings = p.warnings.filter(w => !/budget/i.test(w) && !(cur && w.includes(cur)));
   if (!p.warnings?.length) delete p.warnings;
   const body = {

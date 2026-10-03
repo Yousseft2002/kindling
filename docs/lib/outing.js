@@ -10,6 +10,8 @@
  * so they run offline, work on a saved plan, and are tested in node.
  */
 
+import { ideaTime } from './ideas.js';
+
 /* ---- 1. the calendar ------------------------------------------------- */
 
 /** RFC 5545 escaping for TEXT values: backslash, semicolon, comma, newline. */
@@ -61,6 +63,21 @@ function uid(s) {
 
 /** The whole evening as an .ics file: one event per stop, in order. */
 export function asICS(plan, prefs = {}) {
+  if (plan.planMode === 'open') {
+    const core = (plan.stops || []).filter(s => s.role !== 'optional');
+    if (!core.length) return '';
+    const first = core[0], last = core.at(-1);
+    const start = mins(first.start) ?? 17 * 60;
+    let end = mins(last.start) ?? start;
+    if (end < start) end += 1440;
+    // A loose date is one calendar hold, not a set of business appointments.
+    const hold = {
+      name: plan.title, start: first.start, minutes: end + (last.minutes || 60) - start,
+      address: plan.area || prefs.location, cost: plan.totalCost || 0,
+      why: asText(plan, prefs),
+    };
+    return asICS({ stops: [hold] }, prefs);
+  }
   const date = prefs.date || '';
   const cur = prefs.currency || '';
   const where = String(prefs.location || '').split(',')[0];
@@ -76,6 +93,7 @@ export function asICS(plan, prefs = {}) {
     const from = mins(s.start);
     if (from == null) return;
     const detail = [
+      s.role === 'optional' ? 'Optional — only if you feel like it.' : '',
       s.why,
       s.cost > 0 ? `About ${cur} ${Math.round(s.cost)} for two.` : 'Free.',
       s.booking, s.tip,
@@ -90,7 +108,7 @@ export function asICS(plan, prefs = {}) {
       `DTSTAMP:${now}`,
       `DTSTART:${stamp(date, from)}`,
       `DTEND:${stamp(date, from + (s.minutes || 60))}`,
-      fold(`SUMMARY:${ics(s.name)}`),
+      fold(`SUMMARY:${ics(`${s.role === 'optional' ? 'Optional: ' : ''}${s.name}`)}`),
       fold(`LOCATION:${ics(s.address || where)}`),
       fold(`DESCRIPTION:${ics(detail)}`),
     );
@@ -136,8 +154,16 @@ export function asText(plan, prefs = {}) {
   if (total > 0) out.push(`About ${cur} ${Math.round(total)} for two.`);
   out.push('');
 
-  for (const s of plan.stops || []) {
-    out.push(`${s.start}  ${s.name}`);
+  if (plan.planMode === 'open') out.push(plan.title, plan.pitch || '', '');
+  for (const [i, s] of (plan.stops || []).entries()) {
+    if (plan.planMode === 'open') {
+      out.push(`${s.role === 'optional' ? 'Optional: ' : ''}${s.specific ? s.name : s.idea || s.kind} — ${ideaTime(s, i)}`);
+      if (s.specific && s.address) out.push(`        ${s.address}`);
+      if (s.closingTime) out.push(`        Closes at ${s.closingTime}; check before heading out.`);
+      if (s.daylightUntil) out.push(`        Keep the outdoor part before sunset, around ${s.daylightUntil}.`);
+      continue;
+    }
+    out.push(`${s.role === 'optional' ? 'Optional: ' : ''}${s.start}  ${s.name}`);
     const bits = [s.address, s.cost > 0 ? `${cur} ${Math.round(s.cost)}` : 'free']
       .filter(Boolean).join(' - ');
     if (bits) out.push(`        ${bits}`);
@@ -149,6 +175,11 @@ export function asText(plan, prefs = {}) {
   // app and sends a clean copy to the other person is worse than no copy.
   for (const w of plan.warnings || []) out.push('', `Note: ${w}`);
   return out.join('\n');
+}
+
+export function areaUrl(plan, prefs = {}) {
+  return 'https://www.google.com/maps/search/?api=1&query='
+    + encodeURIComponent(plan.area || String(prefs.location || '').split(',')[0]);
 }
 
 /* ---- 3. the route ---------------------------------------------------- */

@@ -14,7 +14,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#0D0C10">
 
-<meta name="description" content="Seven questions, one evening: a routed date built from real places near you.">
+<meta name="description" content="Seven questions, one evening: a date idea, a good area, and real places to choose from.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
@@ -806,6 +806,14 @@
   /* ---- tune the night (40) ---- */
   .gold-h{margin:0 0 16px;font-size:12.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--gold);font-weight:600}
   .tune{margin-bottom:18px}
+  .tune [data-plan-mode]{margin-bottom:18px}
+  .possible-places{margin-bottom:18px;overflow-wrap:anywhere}
+  .possible-places summary{min-height:44px;cursor:pointer;color:var(--gold);font-weight:600}
+  .possible-places summary:active{color:var(--accent)}
+  .possible-places summary:focus-visible{outline:3px solid var(--accent);outline-offset:3px}
+  .venue-options{list-style:none;padding:0;margin:12px 0;overflow-wrap:anywhere}
+  .venue-options li{padding:16px 0;border-top:1px solid var(--line)}
+  .venue-options .detail{margin:6px 0}
   .tune-row{display:flex;justify-content:space-between;align-items:baseline}
   .tune label,.tune .lbl{font-size:13px;color:var(--muted);font-weight:500;display:flex;justify-content:space-between;gap:8px}
   .tune output{font-variant-numeric:tabular-nums;font-weight:600;color:var(--ink)}
@@ -1028,14 +1036,14 @@
     <section class="screen" data-step>
       <p class="eyebrow">Seven questions</p>
       <h1>Let's plan something worth leaving the house for.</h1>
-      <p class="say">Tell me the constraints and I'll give you a route — where to go, when to be there, what it costs, and what to book ahead.</p>
+      <p class="say">Tell me what you're in the mood for. I'll shape the evening: a good area, a couple of ideas, and real places you can choose when you feel like it.</p>
     </section>
 
     <!-- 1 --- location ------------------------------------------------- -->
     <section class="screen" data-step data-focus="location" data-required="location">
       <p class="eyebrow">Where</p>
       <h1>Where are you two going to be?</h1>
-      <p class="say">A city works. A neighbourhood works better — I'll keep every stop within walking distance of it.</p>
+      <p class="say">A city works. A neighbourhood helps narrow the search — I'll look for nearby possibilities that fit how you're getting around.</p>
       <div class="loc">
         <div class="loc-row">
           <input id="location" name="location" placeholder="Start typing…" autocapitalize="words" required>

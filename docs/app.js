@@ -1,7 +1,7 @@
 import * as places from './lib/places.js';
 import * as wx from './lib/weather.js';
 import * as community from './lib/community.js';
-import { build, swapStop, photograph, STAGES, STYLES, TRANSPORT, ADVENTURE } from './lib/plan.js';
+import { build, swapStop, setPlanMode, venueOptions, photograph, STAGES, STYLES, TRANSPORT, ADVENTURE } from './lib/plan.js';
 import { initCommunity, openCommunity, toast } from './community-tab.js';
 import { openInvitation } from './ui/invitation.js';
 import { openStop, refreshStop, close as closeStop, isOpen as stopOpen } from './ui/hero.js';
@@ -529,8 +529,19 @@ function show(d, { quiet = false } = {}) {
   wireTake(d);
 
   out.querySelectorAll('.row').forEach(r => r.addEventListener('click', () => openRow(+r.dataset.i)));
+  out.querySelectorAll('[data-plan-mode]').forEach(b => b.addEventListener('click', () => {
+    setPlanMode(current.plan, b.dataset.planMode, current.prefs, current.weather);
+    current.prefs.planMode = current.plan.planMode;
+    current.saved = Date.now();
+    save(current);
+    show(current, { quiet: true });
+  }));
+  out.querySelectorAll('[data-venue-option]').forEach(b => b.addEventListener('click', () => {
+    const i = +b.dataset.venueStop;
+    choosePlace(i, venueOptions(current.plan, i, current.prefs)[+b.dataset.venueOption]);
+  }));
   wireTune(out, prefs, changes => {
-    const next = { ...prefs, ...changes };
+    const next = { ...prefs, ...changes, planMode: current.plan.planMode || 'specific' };
     // Keep the question deck in step, so "Plan another" starts from here.
     put('budget', next.budget); put('start_time', next.startTime); put('hours', next.hours);
     $('#budget_range').value = next.budget; $('#budget_out').textContent = Math.round(next.budget);
@@ -567,8 +578,13 @@ function stopCtx(i) {
   return {
     index: i, stop: s, rowFor,
     money: current.shared ? null : n => n > 0 ? `${cur} ${Math.round(n)}` : 'Free',
-    canSwap: !!(s.slot && s.alts?.length),
+    canSwap: !current.shared && !!(s.slot && s.alts?.length),
     onSwap: swapAt,
+    flexible: current.plan.planMode === 'open' && !s.specific,
+    softTiming: current.plan.planMode === 'open',
+    options: current.plan.planMode === 'open' ? venueOptions(current.plan, i, current.prefs) : [],
+    canPick: !current.shared,
+    onPick: choosePlace,
   };
 }
 
@@ -619,24 +635,28 @@ function swapAt(i) {
   const s = current.plan.stops[i];
   openSwap({
     stop: s, index: i, alts: s.alts || [],
-    async onPick(venue) {
-      swapStop(current.plan, i, venue, current.prefs, current.weather);
-      current.saved = Date.now();
-      show(current, { quiet: true });
-      if (stopOpen()) refreshStop(stopCtx(i));
-      save(current);
-      // A photograph, if the new place has one - it arrives when it arrives.
-      const before = current.plan.stops[i].photo;
-      await photograph(current.plan.stops[i]);
-      if (current.plan.stops[i].photo !== before) {
-        save(current);
-        show(current, { quiet: true });
-        if (stopOpen()) refreshStop(stopCtx(i));
-      }
-      const row = rowFor(i);
-      if (row && !stopOpen()) springTo(row, { scale: 0.96 }, { scale: 1 }, { tension: 220, friction: 16 });
-    },
+    onPick: venue => choosePlace(i, venue),
   });
+}
+
+async function choosePlace(i, venue) {
+  if (!venue || current.shared) return;
+  swapStop(current.plan, i, venue, current.prefs, current.weather);
+  current.saved = Date.now();
+  show(current, { quiet: true });
+  if (stopOpen()) refreshStop(stopCtx(i));
+  save(current);
+  // A photograph, if the new place has one - it arrives when it arrives.
+  const data = current, stop = data.plan.stops[i], before = stop.photo;
+  await photograph(stop);
+  if (current !== data || data.plan.stops[i] !== stop) return;
+  if (stop.photo !== before) {
+    save(current);
+    show(current, { quiet: true });
+    if (stopOpen()) refreshStop(stopCtx(i));
+  }
+  const row = rowFor(i);
+  if (row && !stopOpen()) springTo(row, { scale: 0.96 }, { scale: 1 }, { tension: 220, friction: 16 });
 }
 
 /* ---- opening state ---------------------------------------------------

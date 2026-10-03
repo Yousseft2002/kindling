@@ -10,7 +10,7 @@ const prefs = {
   location: 'Boston, Massachusetts', lat: 42.3555, lon: -71.0565, budget: 180, currency: 'USD',
   stage: 'dating', style: 'smart_casual', transport: 'walking', interests: ['art galleries'],
   date: new Date(Date.now() + 3 * 864e5).toISOString().slice(0, 10), startTime: '17:30', hours: 5,
-  note: '', weatherText: 'clear', adventure: 2, localOnly: false, diet: [],
+  note: '', weatherText: 'clear', adventure: 2, localOnly: false, diet: [], planMode: 'specific',
 };
 const weather = { summary: 'clear', highC: 21, lowC: 13, precip: 10, windKph: 9, sunset: 18 * 60 + 41, source: 'manual' };
 const plan = await build(prefs, weather, () => {});
@@ -117,5 +117,122 @@ await ok('a token that inflates enormously is refused', async () => {
   const bomb = Buffer.from(JSON.stringify({ v: 1, st: [{ name: 'a', why: 'x'.repeat(4e6) }] }));
   const z = await new Response(new Blob([bomb]).stream().pipeThrough(new CompressionStream('deflate-raw'))).arrayBuffer();
   await rejects('1.z.' + Buffer.from(z).toString('base64url'));
+});
+
+const { invitationSummary, ideaTime } = await import('../docs/lib/ideas.js');
+const { asText, asICS, areaUrl } = await import('../docs/lib/outing.js');
+const loose = {
+  plan: {
+    planMode: 'open', area: 'Boston', title: 'Clay Painting & Dinner',
+    pitch: 'Start with clay painting, then find dinner nearby. Keep the rest open.',
+    totalCost: 110,
+    stops: [
+      { slot: 'pottery', idea: 'Clay painting', role: 'core', name: 'Clay painting',
+        kind: 'activity', start: '18:30', minutes: 70, cost: 40, indoor: true,
+        specific: false, timeSensitive: false, lat: null, lon: null,
+        alts: [{ name: 'Studio <A>', lat: 42.355, lon: -71.057, kind: 'Pottery studio',
+          openingHours: 'Mo-Su 11:00-23:30', website: 'https://example.com/studio' }] },
+      { slot: 'food', idea: 'Dinner nearby', role: 'next', name: 'Dinner nearby',
+        kind: 'food', start: '19:45', minutes: 90, cost: 70, indoor: true,
+        specific: false, lat: null, lon: null, alts: [] },
+      { slot: 'drinks', idea: 'Drinks', role: 'optional', name: 'Drinks nearby',
+        kind: 'drinks', start: '21:30', minutes: 40, cost: 0, indoor: true,
+        specific: false, lat: null, lon: null, alts: [] },
+    ],
+  },
+  prefs, weather,
+};
+await ok('invitation is short and human without any exact restaurant', () => {
+  assert.equal(invitationSummary(loose.plan, prefs), 'You, Me, Clay Painting & dinner in Boston.');
+  assert.ok(!invitationSummary(loose.plan, prefs).includes('18:30'));
+});
+await ok('a loose evening without a restaurant survives sealing and opening', async () => {
+  const opened = (await unseal(await seal(loose))).data.plan;
+  assert.equal(opened.planMode, 'open');
+  assert.equal(opened.area, 'Boston');
+  assert.equal(opened.stops[1].specific, false);
+  assert.equal(opened.stops[1].lat, null);
+  assert.equal(opened.stops[2].role, 'optional');
+  assert.equal(opened.stops[0].alts[0].name, 'Studio <A>');
+  assert.equal(invitationSummary(opened, prefs), invitationSummary(loose.plan, prefs));
+});
+await ok('loose envelopes keep meaningful times but leave prices behind', async () => {
+  const timed = JSON.parse(JSON.stringify(loose));
+  timed.plan.pitch += ' — about USD 110 for two.';
+  Object.assign(timed.plan.stops[0], {
+    timeSensitive: true, sessionStart: '18:35', closingTime: '20:00',
+  });
+  const opened = (await unseal(await seal(timed))).data.plan;
+  assert.ok(!opened.pitch.includes('USD'));
+  assert.equal(opened.stops[0].sessionStart, '18:35');
+  assert.equal(opened.stops[0].closingTime, '20:00');
+  assert.ok(ideaTime(opened.stops[0], 0).includes('18:35'));
+});
+await ok('old version-one envelope links still decode without new fields', async () => {
+  const old = '1.r.' + Buffer.from(JSON.stringify({
+    v: 1, p: { title: 'Our evening' }, st: [{ name: 'Old Café', kind: 'coffee', start: '17:00', minutes: 40 }],
+    pf: { location: 'Boston' },
+  })).toString('base64url');
+  const opened = (await unseal(old)).data;
+  assert.equal(opened.plan.title, 'Our evening');
+  assert.equal(opened.plan.stops[0].name, 'Old Café');
+  assert.notEqual(opened.plan.planMode, 'open');
+});
+await ok('new envelope fields cannot carry scripts as URLs or invalid modes', async () => {
+  const hostile = JSON.parse(JSON.stringify(loose));
+  hostile.plan.planMode = 'unexpected';
+  hostile.plan.stops[0].alts[0].website = 'javascript:alert(1)';
+  hostile.plan.stops[0].role = 'mandatory';
+  const opened = (await unseal(await seal(hostile))).data.plan;
+  assert.equal(opened.planMode, '');
+  assert.equal(opened.stops[0].role, '');
+  assert.equal(opened.stops[0].alts[0].website, '');
+});
+await ok('loose text keeps dinner flexible and extensions optional', () => {
+  const text = asText(loose.plan, prefs);
+  assert.ok(text.includes('Dinner nearby'));
+  assert.ok(text.includes('Optional:'));
+  assert.ok(!text.includes('19:45'));
+  assert.equal((asICS(loose.plan, prefs).match(/BEGIN:VEVENT/g) || []).length, 1);
+  assert.ok(areaUrl(loose.plan, prefs).includes('query=Boston'));
+  const chosen = { ...loose.plan, planMode: 'specific' };
+  assert.ok(asText(chosen, prefs).includes('Optional: 21:30'));
+  assert.ok(asICS(chosen, prefs).includes('SUMMARY:Optional: Drinks nearby'));
+});
+await ok('time-sensitive ideas retain their meaningful time', () => {
+  const session = { ...loose.plan.stops[0], timeSensitive: true, start: '18:35' };
+  assert.ok(ideaTime(session, 0).includes('18:35'));
+  const timed = JSON.parse(JSON.stringify(loose));
+  Object.assign(timed.plan.stops[0], { timeSensitive: true, start: '18:35', closingTime: '20:00' });
+  const text = asText(timed.plan, prefs);
+  assert.ok(text.includes('18:35'));
+  assert.ok(text.includes('Closes at 20:00'));
+});
+
+globalThis.innerWidth = 390;
+globalThis.innerHeight = 844;
+globalThis.matchMedia = () => ({ matches: true });
+const { planHtml } = await import('../docs/ui/results.js');
+await ok('loose results show the concept, optional language, and escaped venue options', () => {
+  const html = planHtml(loose);
+  assert.ok(html.includes('Clay Painting &amp; Dinner'));
+  assert.ok(html.includes('The move'));
+  assert.ok(/Optional|If you/i.test(html));
+  assert.ok(!html.includes('19:45'));
+  assert.ok(!html.includes('<A>'));
+  assert.ok(!html.includes('<polyline'));
+  assert.ok(html.includes('id="seal"'), 'a restaurant is not required to send an invitation');
+  const shared = planHtml({ ...loose, shared: true });
+  assert.ok(!shared.includes('data-plan-mode'));
+  assert.ok(!shared.includes('data-venue-option'));
+  assert.ok(!shared.includes('USD'));
+});
+await ok('old saved plans render their exact places and times', () => {
+  const old = JSON.parse(JSON.stringify(d));
+  delete old.plan.planMode;
+  old.plan.stops.forEach(s => { delete s.idea; delete s.role; delete s.specific; });
+  const html = planHtml(old);
+  assert.ok(html.includes(old.plan.stops[0].start));
+  assert.ok(html.includes(old.plan.stops[0].name.replace(/&/g, '&amp;')));
 });
 console.log(`\n${pass} passed`);

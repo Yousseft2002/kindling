@@ -1949,6 +1949,9 @@ def test_static_app() -> None:
           ".complete" in tiles)
     check("every ui module is precached for offline use",
           all(f"at('ui/{n}')" in sw for n in ui), str([n for n in ui if f"at('ui/{n}')" not in sw]))
+    check("every planning module is precached for offline use",
+          all(f"at('lib/{n}')" in sw for n in lib),
+          str([n for n in lib if f"at('lib/{n}')" not in sw]))
     check("the springs honour reduced motion", "prefers-reduced-motion" in ui["spring.js"])
 
     # One escaper, imported. Seven modules each carried a byte-identical copy,
@@ -2124,6 +2127,14 @@ def test_static_app() -> None:
           "requestAnimationFrame(" not in env_ui)
     check("the results page offers to seal and send, but not on a received plan",
           'id="seal"' in ui["results.js"] and "shared ? '' : sendHtml()" in ui["results.js"])
+    ideas = lib.get("ideas.js", "")
+    check("invitation wording has one deterministic helper",
+          "export function invitationSummary" in ideas
+          and "invitationSummary(" in env_ui)
+    check("idea wording requires no network or document",
+          "fetch(" not in ideas and "document." not in ideas and "window." not in ideas)
+    check("new envelope modes remain optional on version-one links",
+          "const VERSION = 1" in env_lib and "planMode:" in env_lib)
 
     # An invented affiliate tag does not earn money - it breaks the link and
     # can close the account.

@@ -11,8 +11,9 @@
  */
 
 import { springTo, riseIn, settled, REDUCED } from './spring.js';
-import { visual, revealTiles } from './tiles.js';
+import { visual, revealTiles, routeMap } from './tiles.js';
 import { endOf, walkTime } from '../lib/plan.js';
+import { ideaTime } from '../lib/ideas.js';
 import { esc } from '../lib/fmt.js';
 
 export const DIET_LABEL = { vegetarian: 'Vegetarian', vegan: 'Vegan', gluten_free: 'Gluten-free',
@@ -34,7 +35,7 @@ export function openStop(ctx) {
   hv.className = 'hv';
   hv.setAttribute('role', 'dialog');
   hv.setAttribute('aria-modal', 'true');
-  hv.setAttribute('aria-label', ctx.stop.name);
+  hv.setAttribute('aria-label', ctx.flexible ? ctx.stop.idea || ctx.stop.kind : ctx.stop.name);
   hv.innerHTML = markup(ctx);
   document.body.appendChild(hv);
   document.documentElement.classList.add('locked');
@@ -79,7 +80,7 @@ export function refreshStop(ctx) {
   const scroller = hv.scrollTop;
   hv.innerHTML = markup(ctx);
   hv.scrollTop = scroller;
-  hv.setAttribute('aria-label', ctx.stop.name);
+  hv.setAttribute('aria-label', ctx.flexible ? ctx.stop.idea || ctx.stop.kind : ctx.stop.name);
   revealTiles(hv);
   wire(hv, ctx);
   if (!REDUCED) {
@@ -147,10 +148,49 @@ function startFrame(T, M) {
   };
 }
 
-function markup({ stop: s, index, money, canSwap }) {
+export function venueOptionsHtml(options, index, money, canPick = false) {
+  if (!options.length) return '<p class="detail">No named place was verified here. Keep the idea, but check locally before setting out.</p>';
+  return `<ul class="venue-options">${options.map((v, n) => `<li>
+    <b>${esc(v.name)}</b>
+    ${v.address ? `<p class="detail">${esc(v.address)}</p>` : ''}
+    ${v.openingHours ? `<p class="detail">Published hours: ${esc(v.openingHours)} · check before going</p>` : '<p class="detail">Hours unconfirmed — check before going</p>'}
+    ${money && v.cost != null ? `<p class="detail">Estimate for two: ${esc(money(v.cost))}</p>` : ''}
+    <div class="hv-actions">
+      ${v.website ? `<a class="btn ghost" href="${esc(v.website)}" target="_blank" rel="noopener">Check the place</a>` : ''}
+      ${canPick ? `<button class="btn ghost" type="button" data-venue-stop="${index}" data-venue-option="${n}">Choose this place</button>` : ''}
+    </div>
+  </li>`).join('')}</ul>`;
+}
+
+function markup({ stop: s, index, money, canSwap, flexible, softTiming, options = [], canPick }) {
   const W = Math.min(innerWidth, 1600), H = Math.round(innerHeight * 0.6);
+  if (flexible) {
+    const time = ideaTime(s, index);
+    return `<div class="hv-media">
+      ${routeMap(options, W, H, { options: true, clearTop: 56, clearBottom: 150 }) || visual({ kind: s.kind }, W, H)}
+      <div class="hv-shade" aria-hidden="true"></div>
+    </div>
+    <button class="hv-close" type="button" aria-label="Back to the evening">&#8592;</button>
+    <div class="hv-over">
+      <p class="eyebrow">${esc(time)}${s.role === 'optional' ? ' · Optional' : ''}</p>
+      <h2>${esc(s.idea || s.kind)}</h2>
+      <p class="hv-kind">Keep the idea. Choose the place when you feel like it.</p>
+    </div>
+    <div class="hv-panel">
+      <p class="insight-line"><span aria-hidden="true">✦</span> ${esc(s.why)}</p>
+      ${s.tip ? `<p class="insight-line soft">${esc(s.tip)}</p>` : ''}
+      ${s.sessionStart ? `<p class="detail">Listed session start: ${esc(s.sessionStart)}. Confirm the date and availability before booking.</p>`
+        : s.timeSensitive ? '<p class="detail">Suggested arrival, not an event start. Check the venue hours before you go.</p>' : ''}
+      ${s.closingTime ? `<p class="detail">The researched option closes at ${esc(s.closingTime)}. Check the hours below when choosing a place.</p>` : ''}
+      ${s.daylightUntil ? `<p class="detail">Daylight ends around ${esc(s.daylightUntil)}. Keep the outdoor part before then.</p>` : ''}
+      ${!s.indoor && s.fallback ? `<p class="detail">If it rains: ${esc(s.fallback)}</p>` : ''}
+      <h4 class="gold-h">Possible places, not commitments</h4>
+      <p class="detail">Nothing to choose before you seal this evening. Choosing a place only fixes this part.</p>
+      ${venueOptionsHtml(options, index, money, canPick)}
+    </div>`;
+  }
   const facts = [s.cuisine, walkTime(s)].filter(Boolean).join(' · ');
-  const diet = (s.diet || []).map(d => `<span class="tag">${DIET_LABEL[d] || d}</span>`).join('');
+  const diet = (s.diet || []).map(d => `<span class="tag">${esc(DIET_LABEL[d] || d)}</span>`).join('');
   const rows = [
     s.address && ['Address', esc(s.address)],
     s.openingHours && ['Hours', esc(s.openingHours)],
@@ -173,15 +213,15 @@ function markup({ stop: s, index, money, canSwap }) {
     </div>
     <button class="hv-close" type="button" aria-label="Back to the evening">&#8592;</button>
     <div class="hv-over">
-      <p class="eyebrow">Stop ${index + 1} &middot; ${esc(s.start)}–${esc(endOf(s))}</p>
+      <p class="eyebrow">Stop ${index + 1} &middot; ${esc(softTiming ? ideaTime(s, index) : `${s.start}–${endOf(s)}`)}</p>
       <h2>${esc(s.name)}</h2>
       <p class="hv-kind">${[s.venueKind, facts].filter(Boolean).map(esc).join(' &middot; ')}</p>
     </div>
     <div class="hv-panel">
       <div class="hv-stats">
-        <div><small>Arrive</small><b>${esc(s.start)}</b></div>
-        <div><small>Stay</small><b>${Math.round(s.minutes)} min</b></div>
-        ${money ? `<div><small>Budget</small><b>${money(s.cost)}</b></div>` : ''}
+        <div><small>${softTiming ? 'When' : 'Arrive'}</small><b>${esc(softTiming ? ideaTime(s, index) : s.start)}</b></div>
+        <div><small>Stay</small><b>${softTiming ? 'About ' : ''}${Math.round(s.minutes)} min</b></div>
+        ${money ? `<div><small>Budget</small><b>${esc(money(s.cost))}</b></div>` : ''}
       </div>
       <p class="insight-line"><span aria-hidden="true">✦</span> ${esc(s.why)}</p>
       ${s.tip ? `<p class="insight-line soft">${esc(s.tip)}</p>` : ''}
@@ -200,5 +240,7 @@ function markup({ stop: s, index, money, canSwap }) {
 function wire(hv, ctx) {
   hv.querySelector('.hv-close').onclick = () => close();
   hv.querySelector('.swap-go')?.addEventListener('click', () => ctx.onSwap(ctx.index));
+  hv.querySelectorAll('[data-venue-option]').forEach(b => b.addEventListener('click', () =>
+    ctx.onPick?.(ctx.index, ctx.options[+b.dataset.venueOption])));
   hv.onkeydown = e => { if (e.key === 'Escape' && !document.querySelector('.swap')) close(); };
 }
